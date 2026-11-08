@@ -13,6 +13,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ### Open
 - issue #4: waiting for the reporter to replay the reproduction against a binary at or after 0.2.0.
 
+## [0.2.2] — 2026-11-08 <!-- scan:ok -->
+
+Three small bugs found by the second test pass (23 tools, test database filled).
+
+### Fixed
+- **`netbox_search_objects` could fail on some types when `fields` named a field the type does not have** (NetBox answers 500). The search now retries that type without `fields` and keeps only the requested keys on our side, so the other types and this one still answer; an authentication error is not retried. Test: `search_survives_a_field_the_type_does_not_have`.
+- **Dry-run of `netbox_run_script` did not check that the script exists.** It now reads the script first (a read, nothing is run) and answers `exists`, the script's `id`/`name`/`display`, and a `warning` that a real call would fail with 404 when it is missing; `would_send` still shows the request. A real call is unchanged. Test: `dry_run_of_a_script_checks_that_it_exists`.
+- **An invalid address returned the whole HTML page inside the error message.** An HTML answer (unknown path, proxy page) is now reported as "an HTML page, not a NetBox API answer"; the JSON errors of NetBox are unchanged. Checked in `reading_a_missing_object_is_an_answer_not_a_tool_error`.
+
+### Added
+- Totals: 21 end-to-end tests (was 19); `cargo clippy --all-targets` clean.
+
 ## [0.2.1] — 2026-11-08 <!-- scan:ok -->
 
 Fixes found by a first full pass of the 23 tools against a throw-away NetBox 4.7.4 in dry-run mode.

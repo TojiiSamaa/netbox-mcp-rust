@@ -247,9 +247,17 @@ fn search_objects(a: Args, ctx: Arc<Ctx>) -> BoxFut<Result<Value>> {
             q.push(("fields".to_string(), fields.join(",")));
         }
         let runs = types.iter().map(|t| {
-            let (ctx, q) = (ctx.clone(), q.clone());
+            let (ctx, q, fields) = (ctx.clone(), q.clone(), fields.clone());
             let t = t.clone();
-            async move { (t.key.clone(), ctx.nb.get_with_fallback(&t.endpoint, t.fallback.as_deref(), &q).await) }
+            async move {
+                let mut r = ctx.nb.get_with_fallback(&t.endpoint, t.fallback.as_deref(), &q).await;
+                // Un champ que ce type n'a pas peut faire échouer NetBox (500) : on relit sans `fields` et on garde les clés demandées ici.
+                if !fields.is_empty() && r.as_ref().err().is_some_and(|e| !e.is_any_auth()) {
+                    let plain: Vec<_> = q.iter().filter(|(k, _)| k != "fields").cloned().collect();
+                    r = ctx.nb.get_with_fallback(&t.endpoint, t.fallback.as_deref(), &plain).await;
+                }
+                (t.key.clone(), r)
+            }
         });
         let outcomes = join_all(runs).await;
         // Si NetBox refuse le jeton pour tous les types, ce n'est pas « aucun résultat » (le serveur Python répondait vide).
@@ -264,7 +272,7 @@ fn search_objects(a: Args, ctx: Arc<Ctx>) -> BoxFut<Result<Value>> {
             match r {
                 Ok(v) => {
                     let rows = v.get("results").cloned().unwrap_or_else(|| json!([]));
-                    results.insert(key, shape(&ctx, rows, false));
+                    results.insert(key, shape(&ctx, pick(rows, &fields), false));
                 }
                 Err(e) => {
                     results.insert(key.clone(), json!([]));
@@ -513,7 +521,21 @@ fn run_script(a: Args, ctx: Arc<Ctx>) -> BoxFut<Result<Value>> {
         if let Some(i) = a.int("interval") {
             body["interval"] = json!(i);
         }
-        let v = ctx.write(Method::POST, &format!("extras/scripts/{id}"), &[], Some(&body)).await?;
+        let path = format!("extras/scripts/{id}");
+        // En simulation, on vérifie que le script existe : un vrai appel répondrait 404.
+        let script = if ctx.dry_run {
+            match ctx.nb.get(&path, &[]).await {
+                Ok(s) => Some(pick(shape(&ctx, s, false), &["id".into(), "name".into(), "display".into()])),
+                Err(e) if e.is(ErrorType::NotFound) => None,
+                Err(e) => return Err(e),
+            }
+        } else {
+            None
+        };
+        let v = ctx.write(Method::POST, &path, &[], Some(&body)).await?;
+        if ctx.dry_run {
+            return Ok(json!({ "exists": script.is_some(), "script": script, "warning": script.is_none().then_some("No script with this id: a real call would fail with 404 and run nothing.") }));
+        }
         Ok(shape(&ctx, v, false))
     })
 }

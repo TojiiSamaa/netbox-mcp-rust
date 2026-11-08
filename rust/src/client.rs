@@ -174,7 +174,8 @@ fn not_json(text: &str, status: u16) -> NbError {
 
 fn http_error(status: u16, body: Option<Value>, text: &str, method: &Method, url: &str) -> NbError {
     let detail = body.as_ref().and_then(|b| b.get("detail")).and_then(Value::as_str).map(String::from);
-    let shown = detail.unwrap_or_else(|| text.chars().take(300).collect());
+    // Une page HTML (404 d'un chemin inconnu, page d'erreur d'un proxy) n'est pas un message : on ne la recopie pas.
+    let shown = detail.unwrap_or_else(|| if text.trim_start().starts_with('<') { "an HTML page, not a NetBox API answer".into() } else { text.chars().take(300).collect() });
     let at = url.split("/api/").nth(1).unwrap_or(url);
     let (kind, hint): (ErrorType, &str) = match status {
         400 => (ErrorType::ValidationFailed, "NetBox rejected the values; `details` holds the error per field. Do not resend the same payload: call netbox_describe_type for field names, required fields and choices."),

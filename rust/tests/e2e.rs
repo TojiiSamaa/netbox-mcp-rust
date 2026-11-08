@@ -21,6 +21,9 @@ async fn fake(State(log): State<Log>, method: Method, uri: Uri, body: Bytes) -> 
     log.lock().unwrap().push((method.to_string(), full.clone(), body.clone()));
     let json = |v: Value| (StatusCode::OK, [("content-type", "application/json")], v.to_string()).into_response();
     match (method.as_str(), path.as_str()) {
+        // NetBox répond 500 quand `fields` nomme un champ que le type n'a pas.
+        ("GET", "/api/dcim/sites/") if uri.query().is_some_and(|q| q.contains("bogus")) => (StatusCode::INTERNAL_SERVER_ERROR, "<html>boom</html>").into_response(),
+        ("GET", "/api/extras/scripts/7/") => json(json!({ "id": 7, "name": "s", "display": "s", "vars": {} })),
         ("GET", "/api/dcim/sites/") => json(json!({ "count": 1, "next": null, "previous": null, "results": [{ "id": 1, "name": "s1", "secret": "x", "preshared_key": "p" }] })),
         ("GET", "/api/dcim/sites/1/") => json(json!({ "id": 1, "name": "s1", "display": "s1", "status": "active" })),
         ("GET", "/api/dcim/sites/404/") => (StatusCode::NOT_FOUND, [("content-type", "application/json")], json!({ "detail": "Not found." }).to_string()).into_response(),
@@ -310,8 +313,28 @@ async fn reading_a_missing_object_is_an_answer_not_a_tool_error() {
     let (err, v) = call(&s, "netbox_get_object_by_id", json!({ "object_type": "dcim.site", "object_id": 404 })).await;
     assert!(!err && v["found"] == false && v["error"]["error_type"] == "not_found", "{v}");
     // une adresse inconnue (404 HTML) reste une vraie erreur
-    let (err, _) = call(&s, "netbox_api_get", json!({ "path": "nope/nothing" })).await;
+    let (err, v) = call(&s, "netbox_api_get", json!({ "path": "nope/nothing" })).await;
     assert!(err);
+    // ... mais l'erreur ne recopie pas la page HTML
+    assert!(!v.to_string().contains("<html>") && v.to_string().contains("HTML page"), "{v}");
+}
+
+#[tokio::test]
+async fn search_survives_a_field_the_type_does_not_have() {
+    let (s, _) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false")]).await;
+    let (err, v) = call(&s, "netbox_search_objects", json!({ "query": "s1", "object_types": ["dcim.site"], "fields": ["name", "bogus"] })).await;
+    assert!(!err && v.get("errors").is_none(), "{v}");
+    assert_eq!(v["results"]["dcim.site"], json!([{ "name": "s1" }]));
+}
+
+#[tokio::test]
+async fn dry_run_of_a_script_checks_that_it_exists() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_DRY_RUN", "true")]).await;
+    let (err, v) = call(&s, "netbox_run_script", json!({ "script_id": 7 })).await;
+    assert!(!err && v["exists"] == true && v["script"]["name"] == "s" && v["warning"].is_null(), "{v}");
+    let (err, v) = call(&s, "netbox_run_script", json!({ "script_id": 999 })).await;
+    assert!(!err && v["exists"] == false && v["warning"].as_str().unwrap().contains("404") && v["would_send"][0]["method"] == "POST", "{v}");
+    assert_eq!(writes_received(&log), 0);
 }
 
 async fn tool_schema(s: &Arc<Session>, name: &str) -> Value {
