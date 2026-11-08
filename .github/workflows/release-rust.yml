@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: rust-release-${{ github.ref }}
+  group: release-rust-${{ github.ref }}
 
 jobs:
   prepare:
@@ -168,7 +168,14 @@ jobs:
           IMAGE: ${{ needs.prepare.outputs.image }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
-          cat > notes.md <<EOF
+          # The release notes are the version's section of rust/CHANGELOG.md; no section, no release.
+          sed -n "/^## \[${VERSION}\]/,/^## \[/p" rust/CHANGELOG.md | sed '1d;$d' | sed '/^\[.*\]: http/d' > changes.md
+          if ! grep -q '[^[:space:]]' changes.md; then
+            echo "::error::rust/CHANGELOG.md has no section for ${VERSION}"; exit 1
+          fi
+          cat changes.md > notes.md
+          cat >> notes.md <<EOF
+
           ## Docker image
 
           \`\`\`
@@ -177,7 +184,7 @@ jobs:
 
           Multi-arch (linux/amd64, linux/arm64). Over HTTP it needs \`NETBOX_MCP_TOKEN\` (or \`NETBOX_TOKEN_PASSTHROUGH=true\`); writes stay off unless \`NETBOX_ALLOW_WRITES=true\`. See the README.
           EOF
-          flags=(--title "v${VERSION}" --generate-notes --notes-file notes.md)
+          flags=(--title "v${VERSION}" --notes-file notes.md)
           [ "${PRERELEASE}" = "true" ] && flags+=(--prerelease)
           if gh release view "v${VERSION}" >/dev/null 2>&1; then
             echo "Release v${VERSION} already exists, nothing to do."

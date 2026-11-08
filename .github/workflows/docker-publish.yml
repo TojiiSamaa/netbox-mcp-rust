@@ -15,7 +15,7 @@ env:
 jobs:
   build:
     name: Build (${{ matrix.platform }})
-    # Python image on Docker Hub: upstream only. The fork ships rust-release.yml.
+    # Python image on Docker Hub: upstream only. The fork ships release-rust.yml.
     if: github.repository == 'netboxlabs/netbox-mcp-server'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30

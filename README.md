@@ -69,7 +69,7 @@ Writes off → separate delete switch → type allow/deny → optional human con
 
 ## Docker
 
-Every release publishes a multi-arch image (linux/amd64, linux/arm64) on GHCR, built by `.github/workflows/rust-release.yml` in the same run as the GitHub Release, so the two always match:
+Every release publishes a multi-arch image (linux/amd64, linux/arm64) on GHCR, built by `.github/workflows/release-rust.yml` in the same run as the GitHub Release, so the two always match:
 
 ```
 docker pull ghcr.io/tojiisamaa/netbox-mcp-rust:latest
@@ -78,7 +78,7 @@ docker run --rm -p 8000:8000 -e NETBOX_URL=https://netbox.example.com -e NETBOX_
 
 The image serves HTTP on `/mcp`; outside loopback it needs `NETBOX_MCP_TOKEN` (or `NETBOX_TOKEN_PASSTHROUGH=true`). Writes stay off unless `NETBOX_ALLOW_WRITES=true`. For stdio: `docker run -i --rm -e NETBOX_URL=… -e NETBOX_TOKEN=… ghcr.io/tojiisamaa/netbox-mcp-rust --transport stdio`.
 
-To release: bump `version` in `rust/Cargo.toml`, then either push the tag `vX.Y.Z` or run the workflow by hand (it creates the tag).
+To release: add the version's section to [`rust/CHANGELOG.md`](rust/CHANGELOG.md) (it becomes the Release notes; the workflow fails without it), bump `version` in `rust/Cargo.toml`, then either push the tag `vX.Y.Z` or run the workflow by hand (it creates the tag).
 
 ## Claude Code skills
 
