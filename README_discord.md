@@ -1,32 +1,37 @@
-# 🦀 nbmcp — NetBox MCP en Rust (fork)
+# 🦀 nbmcp — serveur MCP NetBox en Rust
 
-**Un serveur MCP pour NetBox, en un seul binaire Rust. Il lit, et il écrit, sous contrôle.**
-Fork de `netbox-mcp-server` (Apache-2.0). L'upstream est en lecture seule : ici on a ajouté toute l'écriture et les plugins.
+**Un seul binaire. Il lit NetBox, et il écrit, sous contrôle.**
+Fork de [`netboxlabs/netbox-mcp-server`](https://github.com/netboxlabs/netbox-mcp-server) (Apache-2.0). L'original est en lecture seule ; ici toute l'écriture et les plugins sont ajoutés.
 
-## ✨ Ce que ça apporte
-• **Lecture** : mêmes outils que l'upstream, en plus rapide, plus `describe_type`, GraphQL, trace de câble, IP/préfixes libres, statut
-• **Écriture** : créer, modifier, supprimer (un ou en lot), allouer la prochaine IP/préfixe/VLAN/ASN, lancer un script
-• **Plugins** : leurs modèles sont découverts tout seuls et marchent avec les mêmes outils (`netbox_dns.zone`…) ; `api_get/write/delete` pour le reste
-• **Un seul binaire**, pas de Python
+📦 **Dépôt** : https://github.com/TojiiSamaa/netbox-mcp-server (code Rust dans `rust/`)
 
-## 🔒 Sécurité (l'écriture est coupée par défaut)
-• `NETBOX_ALLOW_WRITES=true` pour écrire, `NETBOX_ALLOW_DELETE=true` en plus pour supprimer / scripts
+## ✨ Fonctions
+• **Lecture** : les mêmes outils que l'original, plus description d'un type (champs, choix, filtres), statut, GraphQL, trace de câble, IP/préfixes/VLAN/ASN libres, élévation de baie
+• **Écriture** : créer, modifier, supprimer (un objet ou un lot), allouer la prochaine IP/préfixe/VLAN/ASN, lancer un script
+• **Plugins** : leurs modèles sont découverts tout seuls et marchent avec les mêmes outils (`netbox_dns.zone`…) ; `api_get` / `api_write` / `api_delete` pour tout le reste
+• **Deux modes** : stdio, ou HTTP avec un jeton NetBox par client
+
+## 🔒 Sécurité
+• L'écriture est **coupée par défaut** : `NETBOX_ALLOW_WRITES=true` pour écrire, `NETBOX_ALLOW_DELETE=true` en plus pour supprimer et lancer des scripts
 • `NETBOX_DRY_RUN=true` : tout est simulé, rien n'est envoyé
 • Types autorisés/interdits (`NETBOX_WRITE_TYPES`, `NETBOX_WRITE_DENY`), confirmation humaine, journal d'audit, secrets masqués
-• Un refus arrive **avant** toute requête
+• Un refus arrive **avant** toute requête ; les permissions du jeton NetBox s'appliquent en plus
 
-## 🐛 Bugs corrigés par rapport à l'upstream
-• Les opérations en lot visaient un chemin `/bulk/` qui n'existe pas
+## 🐛 Bugs de l'original corrigés
+• Les lots visaient un chemin `/bulk/` qui n'existe pas
 • La recherche répondait « aucun résultat » quand le jeton était refusé
-• Pas de repli pour l'historique sur NetBox < 4.1
-• Les filtres `__in` / multi-sauts renvoyaient des données fausses sans prévenir
+• L'historique n'avait pas de repli sur NetBox < 4.1
+• Les filtres `__in` et multi-sauts renvoyaient des données fausses sans prévenir
 
 ## 🚀 Démarrer
 ```
 cd rust && cargo build --release
 NETBOX_URL=https://netbox.exemple.fr NETBOX_TOKEN=xxx ./target/release/nbmcp
 ```
-Option HTTP : `--transport http --port 8000` (jeton par client possible avec `NETBOX_TOKEN_PASSTHROUGH=true`).
+HTTP : `./nbmcp --transport http --port 8000` (endpoint `/mcp`).
 
-📖 Doc complète : `rust/README.md` · 🧪 `cargo test` (unitaires + test de bout en bout contre un faux NetBox)
-⚠️ Pas encore éprouvé sur un vrai NetBox.
+## 🧪 État
+• `cargo test` : 31 tests unitaires + 12 tests de bout en bout contre un faux NetBox, tous verts
+• ⚠️ Pas encore éprouvé sur un vrai NetBox
+
+📖 Doc complète : `rust/README.md`
