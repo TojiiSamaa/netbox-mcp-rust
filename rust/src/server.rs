@@ -177,16 +177,24 @@ impl Session {
 
     /// Demande confirmation à un humain. Échoue fermé : si une confirmation est requise et que personne
     /// ne peut la donner (HTTP sans session, client sans elicitation), l'action est refusée.
-    async fn confirm_with_human(&self, def: &ToolDef, args: &Args) -> Result<()> {
+    async fn confirm_with_human(&self, def: &ToolDef, args: &Args, confirm_arg: bool) -> Result<()> {
         if !self.needs_confirmation(def) {
             return Ok(());
         }
-        let refused = || NbError::new(ErrorType::ConfirmationRequired, format!("{} needs a human confirmation, and this client cannot give one (no elicitation support). Nothing was done.", def.name))
-            .hint("Use a client that supports MCP elicitation (stdio), or have the operator set NETBOX_ELICIT=off to accept unconfirmed calls.");
-        let (Some(confirmation), Some(out)) = (&def.confirmation, &self.out) else { return Err(refused()) };
-        if !self.elicitation.load(Ordering::Relaxed) {
-            return Err(refused());
+        let cfg = &self.registry.runtime.cfg;
+        let refused = || {
+            let hint = if cfg.confirm_arg {
+                "Ask the user to confirm this exact action, then repeat the call with confirm: true. Never set it without their answer."
+            } else {
+                "Use a client that supports MCP elicitation (stdio), or have the operator set NETBOX_CONFIRM_ARG=true (confirm: true) or NETBOX_ELICIT=off."
+            };
+            NbError::new(ErrorType::ConfirmationRequired, format!("{} needs a human confirmation, and this client cannot give one (no elicitation support). Nothing was done.", def.name)).hint(hint)
+        };
+        let can_ask = self.out.is_some() && self.elicitation.load(Ordering::Relaxed);
+        if !can_ask {
+            return if cfg.confirm_arg && confirm_arg { Ok(()) } else { Err(refused()) };
         }
+        let (Some(confirmation), Some(out)) = (&def.confirmation, &self.out) else { return Err(refused()) };
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, tx);
@@ -222,9 +230,10 @@ impl Session {
         let mut offset = 0usize;
 
         let outcome: Result<Value> = async {
-            let input = def.input.clone().and(if def.access == Access::Read { vec![] } else { vec![schema::boolean("dry_run").opt()] });
+            let input = def.input.clone().and(if def.access == Access::Read { vec![] } else { vec![schema::boolean("dry_run").opt(), schema::boolean("confirm").opt()] });
             let mut map: Map<String, Value> = input.validate(&raw).map_err(|m| NbError::new(ErrorType::InvalidInput, format!("Invalid arguments for {}: {m}", def.name)))?;
             let dry_arg = map.remove("dry_run").and_then(|v| v.as_bool()) == Some(true);
+            let confirm_arg = map.remove("confirm").and_then(|v| v.as_bool()) == Some(true);
             let args = Args(map);
             offset = args.int("offset").unwrap_or(0).max(0) as usize;
             audit_args = args.to_value();
@@ -243,7 +252,7 @@ impl Session {
                     pre(&rt.cfg, &rt.types, &args)?;
                 }
                 if !dry_run {
-                    self.confirm_with_human(def, &args).await?;
+                    self.confirm_with_human(def, &args, confirm_arg).await?;
                 }
             }
             let nb = match &self.token {

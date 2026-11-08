@@ -31,6 +31,7 @@ Order: CLI flags > environment > `.env` in the current directory. Upstream varia
 | `NETBOX_WRITE_TYPES` | `*` | Writable types, patterns like `dcim.*,netbox_dns.zone`. `*` never matches `users.*` |
 | `NETBOX_WRITE_DENY` | | Patterns refused even if allowed above |
 | `NETBOX_ELICIT` | destructive | Ask the human before acting (`off`, `destructive`, `all`). **Fails closed**: if the client cannot be asked (no elicitation, or HTTP), the call is refused with `confirmation_required`. `off` accepts unconfirmed calls |
+| `NETBOX_CONFIRM_ARG` | false | Opt-in fallback for clients that cannot be asked (HTTP, no elicitation): a destructive call is accepted when it carries `confirm: true`. The refusal tells the model to ask the user first. Off by default |
 | `NETBOX_MAX_BULK` / `NETBOX_MAX_LIMIT` | 100 / 100 | Items per bulk call / page size |
 | `NETBOX_MAX_RESPONSE_CHARS` | 60000 | Answers are cut by rows, with `next_offset` |
 | `NETBOX_REDACT_SECRETS` | true | Masks `preshared_key`, `psk`, `password`, `secret`… (and token keys for `users.token`) |

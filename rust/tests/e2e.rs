@@ -38,6 +38,13 @@ async fn fake(State(log): State<Log>, method: Method, uri: Uri, body: Bytes) -> 
 }
 
 async fn start(extra: &[(&str, &str)]) -> (Arc<Session>, Log) {
+    let (s, log, _) = start_with(extra, false).await;
+    (s, log)
+}
+
+/// `channel` : la session a un canal sortant (stdio), donc peut envoyer une requête d'elicitation.
+async fn start_with(extra: &[(&str, &str)], channel: bool) -> (Arc<Session>, Log, tokio::sync::mpsc::UnboundedReceiver<Value>) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let log: Log = Arc::default();
     let app = Router::new().fallback(fake).with_state(log.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -46,7 +53,7 @@ async fn start(extra: &[(&str, &str)]) -> (Arc<Session>, Log) {
     let mut env: Env = [("NETBOX_URL", url.as_str()), ("NETBOX_TOKEN", "tok")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     env.extend(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())));
     let rt = Runtime::new(load_config(&env).unwrap()).await.unwrap();
-    (Session::new(Registry::new(rt), None, None), log)
+    (Session::new(Registry::new(rt), channel.then_some(tx), None), log, rx)
 }
 
 async fn call(s: &Arc<Session>, name: &str, args: Value) -> (bool, Value) {
@@ -140,6 +147,26 @@ async fn destructive_calls_fail_closed_without_a_way_to_confirm() {
 }
 
 #[tokio::test]
+async fn confirm_argument_is_an_opt_in_fallback() {
+    let base = [("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_ALLOW_DELETE", "true")];
+    // Sans l'option, `confirm: true` ne change rien : le défaut reste fermé.
+    let (s, log) = start(&base).await;
+    let (err, v) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 1, "confirm": true })).await;
+    assert!(err && v.to_string().contains("confirmation_required"), "{v}");
+    assert!(sent(&log, "DELETE").is_empty());
+    // Avec NETBOX_CONFIRM_ARG : refus sans l'argument, succès avec.
+    let mut on = base.to_vec();
+    on.push(("NETBOX_CONFIRM_ARG", "true"));
+    let (s, log) = start(&on).await;
+    let (err, v) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 1 })).await;
+    assert!(err && v.to_string().contains("confirm: true"), "{v}");
+    assert!(sent(&log, "DELETE").is_empty());
+    let (err, v) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 1, "confirm": true })).await;
+    assert!(!err, "{v}");
+    assert_eq!(sent(&log, "DELETE").len(), 1);
+}
+
+#[tokio::test]
 async fn dry_run_sends_no_write() {
     let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_DRY_RUN", "true")]).await;
     let (err, v) = call(&s, "netbox_update_object", json!({ "object_type": "dcim.site", "object_id": 1, "data": { "status": "retired" } })).await;
@@ -204,4 +231,22 @@ async fn graphql_refuses_mutations() {
     let (err, _) = call(&s, "netbox_graphql", json!({ "query": "mutation { x }" })).await;
     assert!(err);
     assert!(log.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn elicitation_accept_and_refuse_when_the_client_supports_it() {
+    let env = [("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_ALLOW_DELETE", "true")];
+    let (s, log, mut rx) = start_with(&env, true).await;
+    s.handle(json!({ "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": { "protocolVersion": "2025-06-18", "capabilities": { "elicitation": {} }, "clientInfo": { "name": "t", "version": "1" } } })).await.unwrap();
+    for (accept, deletes) in [(false, 0), (true, 1)] {
+        let s2 = s.clone();
+        let task = tokio::spawn(async move { call(&s2, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 1 })).await });
+        let req = rx.recv().await.unwrap();
+        assert_eq!(req["method"], "elicitation/create");
+        let result = if accept { json!({ "action": "accept", "content": { "confirm": true } }) } else { json!({ "action": "decline" }) };
+        s.deliver_response(json!({ "jsonrpc": "2.0", "id": req["id"], "result": result }));
+        let (err, v) = task.await.unwrap();
+        assert_eq!(err, !accept, "{v}");
+        assert_eq!(sent(&log, "DELETE").len(), deletes);
+    }
 }
