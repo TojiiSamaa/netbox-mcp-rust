@@ -175,12 +175,17 @@ impl Session {
         }
     }
 
-    /// Demande confirmation à un humain quand le client sait demander. Échoue fermé.
+    /// Demande confirmation à un humain. Échoue fermé : si une confirmation est requise et que personne
+    /// ne peut la donner (HTTP sans session, client sans elicitation), l'action est refusée.
     async fn confirm_with_human(&self, def: &ToolDef, args: &Args) -> Result<()> {
-        let (Some(confirmation), true) = (&def.confirmation, self.needs_confirmation(def)) else { return Ok(()) };
-        let Some(out) = &self.out else { return Ok(()) };
-        if !self.elicitation.load(Ordering::Relaxed) {
+        if !self.needs_confirmation(def) {
             return Ok(());
+        }
+        let refused = || NbError::new(ErrorType::ConfirmationRequired, format!("{} needs a human confirmation, and this client cannot give one (no elicitation support). Nothing was done.", def.name))
+            .hint("Use a client that supports MCP elicitation (stdio), or have the operator set NETBOX_ELICIT=off to accept unconfirmed calls.");
+        let (Some(confirmation), Some(out)) = (&def.confirmation, &self.out) else { return Err(refused()) };
+        if !self.elicitation.load(Ordering::Relaxed) {
+            return Err(refused());
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();

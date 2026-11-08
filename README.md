@@ -30,7 +30,7 @@ Order: CLI flags > environment > `.env` in the current directory. Upstream varia
 | `NETBOX_DRY_RUN` | false | Every write is previewed (`would_send`), nothing is sent. Tools are listed even if writes are off |
 | `NETBOX_WRITE_TYPES` | `*` | Writable types, patterns like `dcim.*,netbox_dns.zone`. `*` never matches `users.*` |
 | `NETBOX_WRITE_DENY` | | Patterns refused even if allowed above |
-| `NETBOX_ELICIT` | destructive | Ask the human before acting (`off`, `destructive`, `all`) when the client supports elicitation |
+| `NETBOX_ELICIT` | destructive | Ask the human before acting (`off`, `destructive`, `all`). **Fails closed**: if the client cannot be asked (no elicitation, or HTTP), the call is refused with `confirmation_required`. `off` accepts unconfirmed calls |
 | `NETBOX_MAX_BULK` / `NETBOX_MAX_LIMIT` | 100 / 100 | Items per bulk call / page size |
 | `NETBOX_MAX_RESPONSE_CHARS` | 60000 | Answers are cut by rows, with `next_offset` |
 | `NETBOX_REDACT_SECRETS` | true | Masks `preshared_key`, `psk`, `password`, `secret`… (and token keys for `users.token`) |
@@ -65,6 +65,13 @@ Writes off → separate delete switch → type allow/deny → optional human con
 - Filters: `__in` and multi-hop lookups (`device__site_id`) are rejected with an explanation instead of returning silently wrong data; list values become repeated parameters.
 - HTTP 4xx/5xx become typed errors with a hint and NetBox's per-field details; a JSON 404 (missing object) is told apart from an HTML 404 (unknown endpoint).
 - Responses over the size limit are cut by rows with `next_offset`, never mid-JSON.
+
+## Claude Code skills
+
+| Skill | File | Use |
+|---|---|---|
+| `nbmcp` | `.claude/skills/nbmcp/SKILL.md` | Using the Rust server safely: tools, write switches, confirmation, plugins |
+| `netbox-mcp-testing` | `.claude/skills/netbox-mcp-testing/SKILL.md` | Upstream's protocol for testing the Python server against a live NetBox (kept as is) |
 
 ## Tests
 

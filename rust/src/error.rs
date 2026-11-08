@@ -23,6 +23,7 @@ pub enum ErrorType {
     Timeout,
     ConfigError,
     UserCancelled,
+    ConfirmationRequired,
     InternalError,
 }
 
@@ -47,6 +48,7 @@ impl ErrorType {
             Timeout => "timeout",
             ConfigError => "config_error",
             UserCancelled => "user_cancelled",
+            ConfirmationRequired => "confirmation_required",
             InternalError => "internal_error",
         }
     }

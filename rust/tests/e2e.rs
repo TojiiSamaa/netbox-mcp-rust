@@ -114,7 +114,7 @@ async fn write_flow_update_previous_delete_snapshot() {
 
 #[tokio::test]
 async fn delete_needs_its_own_switch_and_returns_a_snapshot() {
-    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_ALLOW_DELETE", "true")]).await;
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_ALLOW_DELETE", "true"), ("NETBOX_ELICIT", "off")]).await;
     let (err, v) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 1 })).await;
     assert!(!err, "{v}");
     assert_eq!(v["deleted"]["name"], "s1");
@@ -123,6 +123,20 @@ async fn delete_needs_its_own_switch_and_returns_a_snapshot() {
     let (err, _) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 404 })).await;
     assert!(err);
     assert_eq!(sent(&log, "DELETE").len(), 1);
+}
+
+#[tokio::test]
+async fn destructive_calls_fail_closed_without_a_way_to_confirm() {
+    // Défaut (NETBOX_ELICIT=destructive) et session sans canal ni elicitation : refus avant toute requête.
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_ALLOW_DELETE", "true")]).await;
+    let (err, v) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 1 })).await;
+    assert!(err && v.to_string().contains("confirmation_required"), "{v}");
+    let (err, v) = call(&s, "netbox_bulk_delete", json!({ "object_type": "dcim.site", "ids": [1] })).await;
+    assert!(err && v.to_string().contains("confirmation_required"), "{v}");
+    assert!(sent(&log, "DELETE").is_empty());
+    // Les écritures non destructives ne sont pas concernées par le défaut.
+    let (err, v) = call(&s, "netbox_create_object", json!({ "object_type": "dcim.site", "data": { "name": "new" } })).await;
+    assert!(!err, "{v}");
 }
 
 #[tokio::test]
