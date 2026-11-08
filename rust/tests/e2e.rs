@@ -1,0 +1,193 @@
+//! Bout en bout contre un faux NetBox : le serveur MCP est piloté en JSON-RPC (Session), le faux NetBox
+//! enregistre chaque requête reçue. Prouve ce que le serveur envoie réellement, pas ce qu'il prétend envoyer.
+
+use axum::body::Bytes;
+use axum::extract::State;
+use axum::http::{Method, StatusCode, Uri};
+use axum::response::{IntoResponse, Response};
+use axum::Router;
+use nbmcp::config::{load_config, Env};
+use nbmcp::runtime::Runtime;
+use nbmcp::server::{Registry, Session};
+use serde_json::{json, Value};
+use std::sync::{Arc, Mutex};
+
+type Log = Arc<Mutex<Vec<(String, String, Value)>>>;
+
+async fn fake(State(log): State<Log>, method: Method, uri: Uri, body: Bytes) -> Response {
+    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let path = uri.path().to_string();
+    let full = format!("{path}?{}", uri.query().unwrap_or(""));
+    log.lock().unwrap().push((method.to_string(), full.clone(), body.clone()));
+    let json = |v: Value| (StatusCode::OK, [("content-type", "application/json")], v.to_string()).into_response();
+    match (method.as_str(), path.as_str()) {
+        ("GET", "/api/dcim/sites/") => json(json!({ "count": 1, "next": null, "previous": null, "results": [{ "id": 1, "name": "s1", "secret": "x", "preshared_key": "p" }] })),
+        ("GET", "/api/dcim/sites/1/") => json(json!({ "id": 1, "name": "s1", "display": "s1", "status": "active" })),
+        ("GET", "/api/dcim/sites/404/") => (StatusCode::NOT_FOUND, [("content-type", "application/json")], json!({ "detail": "Not found." }).to_string()).into_response(),
+        ("PATCH", "/api/dcim/sites/1/") => json(json!({ "id": 1, "name": "s1", "status": "retired" })),
+        ("DELETE", "/api/dcim/sites/1/") => StatusCode::NO_CONTENT.into_response(),
+        ("POST", "/api/dcim/sites/") => (StatusCode::CREATED, [("content-type", "application/json")], json!({ "id": 9, "name": "new" }).to_string()).into_response(),
+        ("GET", "/api/core/object-changes/") => (StatusCode::NOT_FOUND, "<html>nope</html>").into_response(),
+        ("GET", "/api/extras/object-changes/") => json(json!({ "count": 0, "results": [] })),
+        ("GET", "/api/status/") => json(json!({ "netbox-version": "4.2.0", "plugins": { "netbox_dns": "1.0" } })),
+        ("GET", "/api/core/object-types/") => json(json!({ "count": 1, "next": null, "results": [{ "app_label": "netbox_dns", "model": "zone", "rest_api_endpoint": "/api/plugins/netbox-dns/zones/", "is_plugin_model": true }] })),
+        ("GET", "/api/plugins/netbox-dns/zones/") => json(json!({ "count": 0, "results": [] })),
+        ("POST", "/api/ipam/prefixes/5/available-ips/") => (StatusCode::CREATED, [("content-type", "application/json")], json!({ "id": 3, "address": "10.0.0.1/24" }).to_string()).into_response(),
+        _ => (StatusCode::NOT_FOUND, "<html>nope</html>").into_response(),
+    }
+}
+
+async fn start(extra: &[(&str, &str)]) -> (Arc<Session>, Log) {
+    let log: Log = Arc::default();
+    let app = Router::new().fallback(fake).with_state(log.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut env: Env = [("NETBOX_URL", url.as_str()), ("NETBOX_TOKEN", "tok")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    env.extend(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+    let rt = Runtime::new(load_config(&env).unwrap()).await.unwrap();
+    (Session::new(Registry::new(rt), None, None), log)
+}
+
+async fn call(s: &Arc<Session>, name: &str, args: Value) -> (bool, Value) {
+    let r = s.handle(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name, "arguments": args } })).await.unwrap();
+    let res = &r["result"];
+    let text = res["content"][0]["text"].as_str().unwrap_or("null");
+    (res["isError"] == true, serde_json::from_str(text).unwrap_or(Value::Null))
+}
+
+async fn names(s: &Arc<Session>) -> Vec<String> {
+    let r = s.handle(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).await.unwrap();
+    r["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect()
+}
+
+fn sent(log: &Log, method: &str) -> Vec<(String, Value)> {
+    log.lock().unwrap().iter().filter(|(m, _, _)| m == method).map(|(_, p, b)| (p.clone(), b.clone())).collect()
+}
+
+#[tokio::test]
+async fn read_only_by_default() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false")]).await;
+    let n = names(&s).await;
+    assert!(n.contains(&"netbox_get_objects".into()));
+    assert!(!n.iter().any(|x| x.contains("create") || x.contains("delete") || x.contains("update")), "{n:?}");
+    // même appelé de force, l'outil n'existe pas
+    let r = s.handle(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "netbox_create_object", "arguments": {} } })).await.unwrap();
+    assert!(r.get("error").is_some());
+    assert!(sent(&log, "POST").is_empty());
+}
+
+#[tokio::test]
+async fn reads_redact_secrets_and_use_the_token_scheme() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false")]).await;
+    let (err, v) = call(&s, "netbox_get_objects", json!({ "object_type": "dcim.site", "filters": { "id": [1, 2] }, "fields": ["id", "name"] })).await;
+    assert!(!err, "{v}");
+    assert_eq!(v["results"][0]["secret"], "[redacted]");
+    assert_eq!(v["results"][0]["preshared_key"], "[redacted]");
+    let (_, path, _) = log.lock().unwrap()[0].clone();
+    assert!(path.contains("id=1") && path.contains("id=2") && path.contains("fields=id%2Cname") && path.contains("limit=5"), "{path}");
+}
+
+#[tokio::test]
+async fn invalid_filters_never_reach_netbox() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false")]).await;
+    let (err, v) = call(&s, "netbox_get_objects", json!({ "object_type": "dcim.site", "filters": { "name__in": "a,b" } })).await;
+    assert!(err, "{v}");
+    assert!(log.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn write_flow_update_previous_delete_snapshot() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true")]).await;
+    let n = names(&s).await;
+    assert!(n.contains(&"netbox_update_object".into()) && !n.contains(&"netbox_delete_object".into()));
+
+    let (err, v) = call(&s, "netbox_update_object", json!({ "object_type": "dcim.site", "object_id": 1, "data": { "status": "retired" } })).await;
+    assert!(!err, "{v}");
+    assert_eq!(v["updated"]["status"], "retired");
+    assert_eq!(v["previous"]["status"], "active");
+    assert_eq!(sent(&log, "PATCH")[0].1, json!({ "status": "retired" }));
+
+    let (err, v) = call(&s, "netbox_create_object", json!({ "object_type": "dcim.site", "data": { "name": "new" } })).await;
+    assert!(!err && v["created"]["id"] == 9, "{v}");
+}
+
+#[tokio::test]
+async fn delete_needs_its_own_switch_and_returns_a_snapshot() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_ALLOW_DELETE", "true")]).await;
+    let (err, v) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 1 })).await;
+    assert!(!err, "{v}");
+    assert_eq!(v["deleted"]["name"], "s1");
+    assert_eq!(sent(&log, "DELETE").len(), 1);
+    // objet absent : échoue avant d'envoyer le DELETE
+    let (err, _) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 404 })).await;
+    assert!(err);
+    assert_eq!(sent(&log, "DELETE").len(), 1);
+}
+
+#[tokio::test]
+async fn dry_run_sends_no_write() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_DRY_RUN", "true")]).await;
+    let (err, v) = call(&s, "netbox_update_object", json!({ "object_type": "dcim.site", "object_id": 1, "data": { "status": "retired" } })).await;
+    assert!(!err, "{v}");
+    assert_eq!(v["dry_run"], true);
+    assert_eq!(v["would_send"][0]["method"], "PATCH");
+    assert!(sent(&log, "PATCH").is_empty());
+    let (_, v) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 1 })).await;
+    assert!(v["would_delete"].is_object());
+    assert!(sent(&log, "DELETE").is_empty());
+}
+
+#[tokio::test]
+async fn type_policy_blocks_before_any_request() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_WRITE_TYPES", "ipam.*")]).await;
+    let (err, v) = call(&s, "netbox_create_object", json!({ "object_type": "dcim.site", "data": { "name": "x" } })).await;
+    assert!(err && v.to_string().contains("type_not_allowed"), "{v}");
+    assert!(log.lock().unwrap().is_empty());
+    // le chemin brut ne contourne pas la politique
+    let (err, _) = call(&s, "netbox_api_write", json!({ "method": "POST", "path": "dcim/sites", "body": { "name": "x" } })).await;
+    assert!(err);
+    assert!(log.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn bulk_create_posts_a_list_to_the_list_endpoint() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true")]).await;
+    let (_, _) = call(&s, "netbox_bulk_create", json!({ "object_type": "dcim.site", "items": [{ "name": "a" }, { "name": "b" }] })).await;
+    let posts = sent(&log, "POST");
+    assert_eq!(posts[0].0, "/api/dcim/sites/?");
+    assert_eq!(posts[0].1, json!([{ "name": "a" }, { "name": "b" }]));
+}
+
+#[tokio::test]
+async fn allocate_posts_to_available_ips() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true")]).await;
+    let (err, v) = call(&s, "netbox_allocate", json!({ "parent_type": "ipam.prefix", "parent_id": 5, "what": "ips", "data": { "status": "active" } })).await;
+    assert!(!err, "{v}");
+    assert_eq!(v["allocated"]["address"], "10.0.0.1/24");
+    assert_eq!(sent(&log, "POST")[0].0, "/api/ipam/prefixes/5/available-ips/?");
+}
+
+#[tokio::test]
+async fn changelog_falls_back_for_older_netbox() {
+    let (s, _) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false")]).await;
+    let (err, v) = call(&s, "netbox_get_changelogs", json!({})).await;
+    assert!(!err, "{v}");
+    assert_eq!(v["count"], 0);
+}
+
+#[tokio::test]
+async fn plugin_types_are_discovered_and_usable() {
+    let (s, _) = start(&[]).await;
+    let (err, v) = call(&s, "netbox_get_objects", json!({ "object_type": "netbox_dns.zone" })).await;
+    assert!(!err, "{v}");
+    assert_eq!(v["count"], 0);
+}
+
+#[tokio::test]
+async fn graphql_refuses_mutations() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false")]).await;
+    let (err, _) = call(&s, "netbox_graphql", json!({ "query": "mutation { x }" })).await;
+    assert!(err);
+    assert!(log.lock().unwrap().is_empty());
+}

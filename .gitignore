@@ -90,3 +90,6 @@ logs/
 .worktrees/
 
 .plans/*
+
+# Rust
+rust/target/
