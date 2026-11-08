@@ -7,6 +7,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ## [Unreleased]
 
 ### Changed
+- Repository tooling: the new-issues hook is now started from `$CLAUDE_PROJECT_DIR`, so it also runs when the session's working directory is a subfolder such as `rust/` (a relative path made it fail silently there).
 - CI: the release workflow file is renamed `.github/workflows/release-rust.yml` (was `rust-release.yml`). No change to what it does.
 
 ### Open
