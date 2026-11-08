@@ -66,6 +66,10 @@ Writes off → separate delete switch → type allow/deny → optional human con
 - HTTP 4xx/5xx become typed errors with a hint and NetBox's per-field details; a JSON 404 (missing object) is told apart from an HTML 404 (unknown endpoint).
 - Responses over the size limit are cut by rows with `next_offset`, never mid-JSON.
 
+## Portable skill (any client)
+
+`skill/netbox-mcp-rust/SKILL.md` documents all 23 tools, what is possible / impossible, and recipes. Install it by copying the folder into your client's skills location (Claude Code: `~/.claude/skills/`; OpenCode: `~/.config/opencode/skills/`; Cursor / Codex / Hermes: put its content in the rules or `AGENTS.md` mechanism of your client, this repo's `AGENTS.md` already points to it). `tests/test_skill_tools.py` fails if the skill and `rust/src/tools.rs` disagree.
+
 ## Claude Code skills
 
 | Skill | File | Use |
