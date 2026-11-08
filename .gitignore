@@ -93,3 +93,4 @@ logs/
 
 # Rust
 rust/target/
+.claude/.issues-seen
