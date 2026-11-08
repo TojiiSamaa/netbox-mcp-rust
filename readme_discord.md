@@ -1,0 +1,3 @@
+![nbmcp](https://raw.githubusercontent.com/TojiiSamaa/netbox-mcp-server/main/assets/discord-apercu.png)
+
+nbmcp est un serveur MCP pour NetBox : un agent IA comme Claude peut consulter et modifier l'inventaire réseau par son API REST, avec des garde-fous. Le fork de Toji réécrit le serveur d'origine (Python, lecture seule) en un seul binaire Rust : 23 outils dont 13 en lecture seule, écriture et suppression coupées par défaut, simulation sans envoi, plugins découverts tout seuls, et les bugs de l'original corrigés (lots vers un chemin inexistant, recherche muette quand le jeton est refusé, filtres faux). Éprouvé contre un faux NetBox, pas encore contre un vrai. Licence Apache-2.0.
