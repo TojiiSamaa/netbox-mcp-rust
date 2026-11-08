@@ -309,6 +309,10 @@ fn get_status(_a: Args, ctx: Arc<Ctx>) -> BoxFut<Result<Value>> {
     boxed(async move { ctx.nb.get("status", &[]).await })
 }
 
+fn stats(_a: Args, ctx: Arc<Ctx>) -> BoxFut<Result<Value>> {
+    boxed(async move { Ok(ctx.runtime.stats.snapshot()) })
+}
+
 fn api_get(a: Args, ctx: Arc<Ctx>) -> BoxFut<Result<Value>> {
     boxed(async move {
         let path = api_path(a.text("path"))?;
@@ -616,6 +620,7 @@ pub fn all_tools(cfg: &Config, type_keys: &[String]) -> Vec<ToolDef> {
             describe_type,
         ),
         read("netbox_get_status", "NetBox status", "NetBox version, Django/Python versions, installed plugins and their versions, workers.", vec![], get_status),
+        read("netbox_stats", "Server usage statistics", "Usage counters of this server since it started: calls per tool (real vs test mode), errors, latency p50/p95, last call, network cuts in test mode, confirmations approved / denied / timed out. Reads nothing from NetBox. Also exported to NETBOX_STATS_FILE when the operator sets it.", vec![], stats),
         read(
             "netbox_api_get",
             "Raw NetBox GET",
