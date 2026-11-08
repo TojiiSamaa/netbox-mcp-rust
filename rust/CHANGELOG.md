@@ -13,6 +13,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ### Open
 - issue #4: waiting for the reporter to replay the reproduction against a binary at or after 0.2.0.
 
+## [0.2.3] — 2026-11-08 <!-- scan:ok -->
+
+Two minor points left by the validation of 0.2.2.
+
+### Added
+- `nbmcp --version` (and `-V`) prints `nbmcp <version>`; before, the version was only available in the MCP `serverInfo`. Listed in `--help`.
+
+### Changed
+- README: states that the HTTP mode answers without a token on loopback (127.0.0.1) and that `NETBOX_MCP_TOKEN` must be set as soon as anything else can reach the port. No behaviour change: the token was already required outside loopback.
+
 ## [0.2.2] — 2026-11-08 <!-- scan:ok -->
 
 Three small bugs found by the second test pass (23 tools, test database filled).

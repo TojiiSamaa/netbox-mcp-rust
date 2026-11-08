@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 const HELP: &str = "nbmcp: MCP server for NetBox (read, guarded write, plugins)
 
-Usage: nbmcp [--transport stdio|http] [--host 127.0.0.1] [--port 8000] [--list-tools]
+Usage: nbmcp [--transport stdio|http] [--host 127.0.0.1] [--port 8000] [--list-tools] [--version]
              [--netbox-url URL] [--netbox-token TOKEN] [--[no-]verify-ssl]
              [--enable-plugin-discovery true|false] [--log-level LEVEL]
              [--cors-origins a,b] [--mcp-auth-token TOKEN]
@@ -32,6 +32,7 @@ struct Cli {
     port: Option<String>,
     list_tools: bool,
     help: bool,
+    version: bool,
     set: Vec<(&'static str, String)>,
 }
 
@@ -54,6 +55,7 @@ fn parse_cli() -> Result<Cli, NbError> {
             },
             "--list-tools" => cli.list_tools = true,
             "-h" | "--help" => cli.help = true,
+            "-V" | "--version" => cli.version = true,
             "--host" => cli.host = Some(value("--host")?),
             "--port" => cli.port = Some(value("--port")?),
             "--netbox-url" => cli.set.push(("NETBOX_URL", value("--netbox-url")?)),
@@ -85,6 +87,10 @@ async fn run() -> Result<(), NbError> {
     let cli = parse_cli()?;
     if cli.help {
         print!("{HELP}");
+        return Ok(());
+    }
+    if cli.version {
+        println!("nbmcp {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     let env = build_env(&cli);
