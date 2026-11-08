@@ -67,6 +67,19 @@ Writes off → separate delete switch → type allow/deny → optional human con
 - HTTP 4xx/5xx become typed errors with a hint and NetBox's per-field details; a JSON 404 (missing object) is told apart from an HTML 404 (unknown endpoint).
 - Responses over the size limit are cut by rows with `next_offset`, never mid-JSON.
 
+## Docker
+
+Every release publishes a multi-arch image (linux/amd64, linux/arm64) on GHCR, built by `.github/workflows/rust-release.yml` in the same run as the GitHub Release, so the two always match:
+
+```
+docker pull ghcr.io/tojiisamaa/netbox-mcp-rust:latest
+docker run --rm -p 8000:8000 -e NETBOX_URL=https://netbox.example.com -e NETBOX_TOKEN=xxx -e NETBOX_MCP_TOKEN=choose-a-secret ghcr.io/tojiisamaa/netbox-mcp-rust
+```
+
+The image serves HTTP on `/mcp`; outside loopback it needs `NETBOX_MCP_TOKEN` (or `NETBOX_TOKEN_PASSTHROUGH=true`). Writes stay off unless `NETBOX_ALLOW_WRITES=true`. For stdio: `docker run -i --rm -e NETBOX_URL=… -e NETBOX_TOKEN=… ghcr.io/tojiisamaa/netbox-mcp-rust --transport stdio`.
+
+To release: bump `version` in `rust/Cargo.toml`, then either push the tag `vX.Y.Z` or run the workflow by hand (it creates the tag).
+
 ## Claude Code skills
 
 | Skill | File | Use |

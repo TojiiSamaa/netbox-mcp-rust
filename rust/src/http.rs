@@ -45,7 +45,9 @@ fn bearer(headers: &HeaderMap) -> Option<String> {
 struct AppState {
     registry: Arc<Registry>,
     token: Option<String>,
-    allowed: HashSet<String>,
+    /// None : écoute hors boucle locale sans NETBOX_MCP_ALLOWED_HOSTS, où un jeton est obligatoire ; le contrôle de Host ne protège alors de rien
+    /// et casserait docker -p, un reverse proxy ou un nom DNS.
+    allowed: Option<HashSet<String>>,
     cors: Vec<String>,
     passthrough: bool,
 }
@@ -70,7 +72,7 @@ async fn handle(State(state): State<Arc<AppState>>, method: Method, uri: Uri, he
 async fn route(state: &AppState, method: Method, uri: Uri, headers: HeaderMap, body: Bytes) -> Response {
     // Vérifier Host arrête le DNS rebinding depuis une page web.
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
-    if !state.allowed.contains(host) {
+    if state.allowed.as_ref().is_some_and(|a| !a.contains(host)) {
         return deny(StatusCode::FORBIDDEN, "Host not allowed. See NETBOX_MCP_ALLOWED_HOSTS.");
     }
     if method == Method::OPTIONS {
@@ -120,6 +122,7 @@ pub async fn serve(registry: Arc<Registry>, options: HttpOptions) -> Result<()> 
         .map_err(|e| NbError::new(ErrorType::ConfigError, format!("Cannot listen on {host}:{port}: {e}")))?;
     let bound = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     let shown = if host.contains(':') { format!("[{host}]") } else { host.clone() };
+    let explicit = !allowed_hosts.is_empty();
     let mut allowed: HashSet<String> = allowed_hosts.into_iter().collect();
     for name in [shown.as_str(), "localhost", "127.0.0.1", "[::1]"] {
         if name == shown || is_loopback(&host) {
@@ -127,6 +130,7 @@ pub async fn serve(registry: Arc<Registry>, options: HttpOptions) -> Result<()> 
         }
     }
     crate::log::info(&format!("listening on http://{shown}:{bound}/mcp"));
+    let allowed = (is_loopback(&host) || explicit).then_some(allowed);
     let app = Router::new().fallback(handle).with_state(Arc::new(AppState { registry, token, allowed, cors: cors_origins, passthrough }));
     axum::serve(listener, app).await.map_err(|e| NbError::new(ErrorType::InternalError, format!("HTTP server stopped: {e}")))
 }
