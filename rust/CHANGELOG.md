@@ -4,26 +4,27 @@ Changes to the Rust server in `rust/` (binary `nbmcp`). The upstream Python serv
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/); the version in `Cargo.toml` is the one the binary reports and the one the Git tag and Docker image carry.
 
+**Numbering.** This repository is our own fork, so its releases follow their own line, written `1.x.y`: the first version put online is counted as 1.1.0 and every later one keeps that offset. The entries below were first drafted as 0.1.0 to 0.2.3 and are renamed 1.1.0 to 1.2.3 (same content, no code change). Git tags and Docker tags of the upstream Python server (`v1.0.0` to `v1.2.2`) are a different series: do not read them as ours. The tag `v0.2.3` and the image tags `0.2.3`, `0.2` and `0` were published for a few minutes under the old numbering and removed.
+
 ## [Unreleased]
 
-### Changed
-- Repository tooling: the new-issues hook is now started from `$CLAUDE_PROJECT_DIR`, so it also runs when the session's working directory is a subfolder such as `rust/` (a relative path made it fail silently there).
-- CI: the release workflow file is renamed `.github/workflows/release-rust.yml` (was `rust-release.yml`). No change to what it does.
-
 ### Open
-- issue #4: waiting for the reporter to replay the reproduction against a binary at or after 0.2.0.
+- issue #4: waiting for the reporter to replay the reproduction against a binary at or after 1.2.0.
 
-## [0.2.3] — 2026-11-08 <!-- scan:ok -->
+## [1.2.3] — 2026-11-08 <!-- scan:ok -->
 
-Two minor points left by the validation of 0.2.2.
+Two minor points left by the validation of 1.2.2, plus the renumbering above.
 
 ### Added
 - `nbmcp --version` (and `-V`) prints `nbmcp <version>`; before, the version was only available in the MCP `serverInfo`. Listed in `--help`.
 
 ### Changed
+- Version numbers 0.x.y become 1.x.y (see Numbering). The binary, the Git tag and the image tags now carry `1.2.3`, `1.2`, `1` and `latest`.
+- Repository tooling: the new-issues hook is now started from `$CLAUDE_PROJECT_DIR`, so it also runs when the session's working directory is a subfolder such as `rust/` (a relative path made it fail silently there).
+- CI: the release workflow file is renamed `.github/workflows/release-rust.yml` (was `rust-release.yml`). No change to what it does.
 - README: states that the HTTP mode answers without a token on loopback (127.0.0.1) and that `NETBOX_MCP_TOKEN` must be set as soon as anything else can reach the port. No behaviour change: the token was already required outside loopback.
 
-## [0.2.2] — 2026-11-08 <!-- scan:ok -->
+## [1.2.2] — 2026-11-08 <!-- scan:ok -->
 
 Three small bugs found by the second test pass (23 tools, test database filled).
 
@@ -35,7 +36,7 @@ Three small bugs found by the second test pass (23 tools, test database filled).
 ### Added
 - Totals: 21 end-to-end tests (was 19); `cargo clippy --all-targets` clean.
 
-## [0.2.1] — 2026-11-08 <!-- scan:ok -->
+## [1.2.1] — 2026-11-08 <!-- scan:ok -->
 
 Fixes found by a first full pass of the 23 tools against a throw-away NetBox 4.7.4 in dry-run mode.
 
@@ -56,7 +57,7 @@ Fixes found by a first full pass of the 23 tools against a throw-away NetBox 4.7
 ### Not done (reported as gaps, to be decided)
 CSV import/export, server-side validation before a write (OPTIONS or `commit=false`), cables, assigning an IP to an interface or VM in one call, tags and journal entries, moving a device between racks.
 
-## [0.2.0] — 2026-11-08 <!-- scan:ok -->
+## [1.2.0] — 2026-11-08 <!-- scan:ok -->
 
 Safety release: destructive calls can no longer slip through when the server has no way to ask a human. Also adds the Docker image and the release chain.
 
@@ -85,7 +86,7 @@ Safety release: destructive calls can no longer slip through when the server has
 - Never run against a real NetBox instance: the end-to-end tests use a fake that follows the documented API and records every request.
 - The release workflow had not run on GitHub when this version was prepared (arm64 build, GHCR publication and package-to-repository link unverified).
 
-## [0.1.0] — 2026-11-08 <!-- scan:ok -->
+## [1.1.0] — 2026-11-08 <!-- scan:ok -->
 
 First release: Rust port of [`netboxlabs/netbox-mcp-server`](https://github.com/netboxlabs/netbox-mcp-server) (commit `6f0dbb7`), with the write side upstream deliberately left out and plugin support. One static binary, no Python runtime. The original Python server stays in `src/` untouched (README moved to `README-python.md`).
 
@@ -138,6 +139,6 @@ Writes off, then a separate delete switch, then type allow/deny, then optional h
 - Responses over the size limit are cut by row with `next_offset`.
 
 ### Known limits
-- Never run against a real NetBox instance (see 0.2.0).
-- Destructive confirmation had the fail-open flaw fixed in 0.2.0; do not use 0.1.0 over HTTP with writes and delete enabled.
+- Never run against a real NetBox instance (see 1.2.0).
+- Destructive confirmation had the fail-open flaw fixed in 1.2.0; do not use 1.1.0 over HTTP with writes and delete enabled.
 

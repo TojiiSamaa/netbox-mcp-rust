@@ -1,6 +1,6 @@
 [package]
 name = "nbmcp"
-version = "0.2.3"
+version = "1.2.3"
 edition = "2021"
 description = "Serveur MCP NetBox (portage Rust de netboxlabs/netbox-mcp-server) : lecture + écriture gardée, tout l'API, plugins découverts à chaud."
 license = "Apache-2.0"

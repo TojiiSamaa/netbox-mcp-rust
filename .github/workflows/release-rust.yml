@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release, e.g. 0.2.0 (default: the one in rust/Cargo.toml)"
+        description: "Version to release, e.g. 1.2.0 (default: the one in rust/Cargo.toml)"
         required: false
 
 permissions:
