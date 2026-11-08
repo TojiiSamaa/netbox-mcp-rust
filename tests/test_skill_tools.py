@@ -21,7 +21,7 @@ def test_skill_lists_exactly_the_server_tools():
 
 def test_every_tool_has_a_test_mode_call():
     src = (ROOT / "rust/src/tools.rs").read_text(encoding="utf-8")
-    server = set(re.findall(r'b(?:read|write)\(\s*"(netbox_\w+)"', src))
+    server = set(re.findall(r'\b(?:read|write)\(\s*"(netbox_\w+)"', src))
     calls = set(
         json.loads((ROOT / "rust/test/fixtures/calls.json").read_text(encoding="utf-8"))
     ) - {"_doc"}
