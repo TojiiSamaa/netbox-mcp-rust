@@ -313,3 +313,23 @@ async fn reading_a_missing_object_is_an_answer_not_a_tool_error() {
     let (err, _) = call(&s, "netbox_api_get", json!({ "path": "nope/nothing" })).await;
     assert!(err);
 }
+
+async fn tool_schema(s: &Arc<Session>, name: &str) -> Value {
+    let r = s.handle(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).await.unwrap();
+    r["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap()["inputSchema"].clone()
+}
+
+#[tokio::test]
+async fn confirm_is_published_in_the_schema_when_the_fallback_is_on() {
+    // Issue #5 : le schéma publié est fermé, `confirm` doit y figurer pour les outils qui demandent confirmation.
+    let base = [("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_ALLOW_DELETE", "true")];
+    let (s, _) = start(&[base.as_slice(), &[("NETBOX_CONFIRM_ARG", "true")]].concat()).await;
+    for tool in ["netbox_delete_object", "netbox_bulk_delete", "netbox_run_script", "netbox_api_delete"] {
+        assert_eq!(tool_schema(&s, tool).await["properties"]["confirm"]["type"], "boolean", "{tool}");
+    }
+    // pas de confirmation demandée pour une simple création (NETBOX_ELICIT=destructive) : pas de paramètre en trop
+    assert!(tool_schema(&s, "netbox_create_object").await["properties"].get("confirm").is_none());
+    // repli désactivé : `confirm` n'est pas annoncé
+    let (s, _) = start(&base).await;
+    assert!(tool_schema(&s, "netbox_delete_object").await["properties"].get("confirm").is_none());
+}

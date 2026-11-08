@@ -45,15 +45,29 @@ impl Registry {
             .filter(|t| t.access != Access::Destructive || cfg.allow_delete || cfg.dry_run)
             .map(Arc::new)
             .collect();
-        let list = json!({ "tools": tools.iter().map(|d| tool_json(d)).collect::<Vec<_>>() });
+        let list = json!({ "tools": tools.iter().map(|d| tool_json(d, cfg)).collect::<Vec<_>>() });
         Arc::new(Registry { runtime, tools, list })
     }
 }
 
-fn tool_json(def: &ToolDef) -> Value {
+/// Faut-il la confirmation d'un humain pour cet outil, selon `NETBOX_ELICIT` ?
+fn confirmation_needed(cfg: &crate::config::Config, def: &ToolDef) -> bool {
+    match cfg.elicit {
+        Elicit::Off => false,
+        Elicit::Destructive => def.access == Access::Destructive,
+        Elicit::All => def.access != Access::Read,
+    }
+}
+
+fn tool_json(def: &ToolDef, cfg: &crate::config::Config) -> Value {
     let mut input = def.input.clone();
     if def.access != Access::Read {
         input.push(schema::boolean("dry_run").opt().desc("Show what would be sent without sending anything."));
+        // Le schéma publié est fermé (`additionalProperties: false`) : sans `confirm` ici, un client qui valide
+        // ses arguments ne pourrait jamais envoyer la confirmation que le refus lui demande.
+        if cfg.confirm_arg && confirmation_needed(cfg, def) {
+            input.push(schema::boolean("confirm").opt().desc("Send true only after the user has explicitly agreed to this exact action."));
+        }
     }
     json!({
         "name": def.name,
@@ -168,11 +182,7 @@ impl Session {
     }
 
     fn needs_confirmation(&self, def: &ToolDef) -> bool {
-        match self.registry.runtime.cfg.elicit {
-            Elicit::Off => false,
-            Elicit::Destructive => def.access == Access::Destructive,
-            Elicit::All => def.access != Access::Read,
-        }
+        confirmation_needed(&self.registry.runtime.cfg, def)
     }
 
     /// Demande confirmation à un humain. Échoue fermé : si une confirmation est requise et que personne
