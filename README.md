@@ -41,13 +41,21 @@ Order: CLI flags > environment > `.env` in the current directory. Upstream varia
 
 ## Tools
 
-**Read** (same names and parameters as upstream where they existed): `netbox_get_objects`, `netbox_get_object_by_id`, `netbox_get_changelogs`, `netbox_search_objects`. New: `netbox_list_object_types`, `netbox_describe_type` (fields, required, choices, filters, extra actions from the instance's own OpenAPI), `netbox_get_status`, `netbox_api_get`, `netbox_graphql` (queries only), `netbox_trace`, `netbox_get_available`, `netbox_rack_elevation`, `netbox_render_config`.
+**Read** (same names and parameters as upstream where they existed): `netbox_get_objects`, `netbox_get_object_by_id`, `netbox_get_changelogs`, `netbox_search_objects`. New: `netbox_list_object_types`, `netbox_describe_type` (fields, required, choices, filters, extra actions from the instance's own OpenAPI), `netbox_get_status`, `netbox_api_get`, `netbox_graphql` (queries only), `netbox_trace`, `netbox_get_available`, `netbox_rack_elevation`, `netbox_render_config`, `netbox_stats` (usage counters).
 
 **Write**: `netbox_create_object`, `netbox_bulk_create`, `netbox_update_object` (returns `previous` to revert), `netbox_bulk_update`, `netbox_allocate` (next free IP / prefix / VLAN / ASN, race-free), `netbox_api_write`.
 
 **Destructive**: `netbox_delete_object` and `netbox_bulk_delete` (both return a snapshot of what was removed), `netbox_run_script` (`commit=false` by default), `netbox_api_delete`.
 
 Every write tool also takes `dry_run`.
+
+## Test mode and stats
+
+`MCP_TEST_MODE=1` (or `nbmcp --test`), set at startup only, answers every tool, writes and deletions included, from a simulated NetBox with fixtures. No URL or token needed, nothing leaves the process: the real HTTP client is never built, and any address other than the mock is cut with `TEST_MODE_EGRESS_BLOCKED`. Answers carry `test_mode: true` and `test_notice: "[TEST] ..."`.
+
+`MCP_TEST_APPROVER=approve|deny|timeout|absent` (test mode only, default `deny`) simulates the human validation of write / destructive calls: approved (the mock runs), denied, timed out, or a client without elicitation (`confirmation_required`). Outside test mode it is ignored.
+
+`netbox_stats` returns call counts, errors, p50 / p95 latency per tool and validation counts; `NETBOX_STATS_FILE=path.json` also exports them after each call.
 
 ## Plugins
 
@@ -68,7 +76,7 @@ Writes off → separate delete switch → type allow/deny → optional human con
 
 ## Portable skill (any client)
 
-`skill/netbox-mcp-rust/SKILL.md` documents all 23 tools, what is possible / impossible, and recipes. Install it by copying the folder into your client's skills location (Claude Code: `~/.claude/skills/`; OpenCode: `~/.config/opencode/skills/`; Cursor / Codex / Hermes: put its content in the rules or `AGENTS.md` mechanism of your client, this repo's `AGENTS.md` already points to it). `tests/test_skill_tools.py` fails if the skill and `rust/src/tools.rs` disagree.
+`skill/netbox-mcp-rust/SKILL.md` documents all 24 tools, what is possible / impossible, and recipes. Install it by copying the folder into your client's skills location (Claude Code: `~/.claude/skills/`; OpenCode: `~/.config/opencode/skills/`; Cursor / Codex / Hermes: put its content in the rules or `AGENTS.md` mechanism of your client, this repo's `AGENTS.md` already points to it). `tests/test_skill_tools.py` fails if the skill and `rust/src/tools.rs` disagree.
 
 ## Claude Code skills
 
@@ -80,4 +88,5 @@ Writes off → separate delete switch → type allow/deny → optional human con
 ## Tests
 
 `cargo test`: unit tests per module plus `tests/e2e.rs`, which drives the server over JSON-RPC against a fake NetBox that records every request (read-only by default, redaction, write flow with `previous`, delete snapshot, dry-run sends nothing, type policy blocks before any request, bulk and allocate paths, changelog fallback, plugin discovery, GraphQL mutation refused).
+Test mode proofs: `tests/egress_static.rs` (no network / process call outside `src/client.rs`), `tests/test_mode.rs` (all tools answer from the mock under a panicking transport; the binary run against a sentinel listener receives 0 connections; the 4 validation scenarios for each of the 10 write / destructive tools). For OS-level isolation run `docker run --rm --network none -e NBMCP_ISOLATED=1 ... cargo test --offline` (CI does it). `rust/scripts/mutation-check.sh` adds a real network call outside the single point and requires the static and binary proofs to fail.
 Not tested: a real NetBox instance (the fake follows the documented API, but only a run against NetBox proves it).

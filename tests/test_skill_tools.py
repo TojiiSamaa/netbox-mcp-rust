@@ -1,5 +1,6 @@
 """The portable skill must list exactly the tools the Rust server defines (none missing, none phantom)."""
 
+import json
 import re
 from pathlib import Path
 
@@ -16,3 +17,10 @@ def test_skill_lists_exactly_the_server_tools():
     assert not server - documented, f"missing from SKILL.md: {sorted(server - documented)}"
     assert not documented - server, f"phantom in SKILL.md: {sorted(documented - server)}"
     assert f"## Tools ({len(server)})" in skill, "tool count in the SKILL.md heading is stale"
+
+
+def test_every_tool_has_a_test_mode_call():
+    src = (ROOT / "rust/src/tools.rs").read_text(encoding="utf-8")
+    server = set(re.findall(r'(?:read|write)\(\s*"(netbox_\w+)"', src))
+    calls = set(json.loads((ROOT / "rust/test/fixtures/calls.json").read_text(encoding="utf-8"))) - {"_doc"}
+    assert calls == server, f"calls.json differs: {sorted(calls ^ server)}"
