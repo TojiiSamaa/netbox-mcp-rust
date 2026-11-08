@@ -39,6 +39,23 @@ fn short_type(root: &Value, prop: &Value) -> (String, Option<Value>, bool) {
     (ty, r.get("enum").cloned(), nullable)
 }
 
+/// Les schémas objet (avec `properties`) d'un corps de requête, à travers `$ref`, `allOf`, `oneOf` et `anyOf`.
+/// Les membres tableau (`type: array`) sont ignorés : seul l'objet décrit les champs.
+fn object_members<'a>(root: &'a Value, v: &'a Value, out: &mut Vec<&'a Value>, depth: usize) {
+    let r = resolve(root, v);
+    if r.get("properties").is_some() {
+        out.push(r);
+    }
+    if depth >= 4 {
+        return;
+    }
+    for k in ["allOf", "oneOf", "anyOf"] {
+        for m in r.get(k).and_then(Value::as_array).into_iter().flatten() {
+            object_members(root, m, out, depth + 1);
+        }
+    }
+}
+
 fn api_tail(path: &str) -> &str {
     path.find("/api/").map_or(path, |i| &path[i + 4..])
 }
@@ -50,36 +67,50 @@ pub fn describe(schema: &Value, endpoint: &str) -> Option<Value> {
     let list = &paths[list_key];
     let detail_prefix = format!("{}{{", api_tail(list_key));
 
-    let body = list.pointer("/post/requestBody/content/application~1json/schema").or_else(|| {
-        let detail = paths.iter().find(|(k, _)| api_tail(k).starts_with(&detail_prefix) && api_tail(k).matches('/').count() == api_tail(list_key).matches('/').count() + 1)?.1;
-        detail.pointer("/patch/requestBody/content/application~1json/schema")
-    });
+    // NetBox 4 déclare le POST de liste en `oneOf: [objet, tableau d'objets]` (création en lot) :
+    // les champs sont dans le membre objet, pas à la racine. Repli sur le PATCH du détail si le POST n'en donne pas.
+    let post = list.pointer("/post/requestBody/content/application~1json/schema");
+    let patch = paths
+        .iter()
+        .find(|(k, _)| api_tail(k).starts_with(&detail_prefix) && api_tail(k).matches('/').count() == api_tail(list_key).matches('/').count() + 1)
+        .and_then(|(_, d)| d.pointer("/patch/requestBody/content/application~1json/schema"));
+    let objs = [post, patch]
+        .into_iter()
+        .flatten()
+        .map(|b| {
+            let mut found = Vec::new();
+            object_members(schema, b, &mut found, 0);
+            found
+        })
+        .find(|f| !f.is_empty())
+        .unwrap_or_default();
+    let required: Vec<&str> = objs.iter().flat_map(|o| o.get("required").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str)).collect();
     let mut fields = Vec::new();
-    if let Some(b) = body {
-        let b = resolve(schema, b);
-        let required: Vec<&str> = b.get("required").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        if let Some(props) = b.get("properties").and_then(Value::as_object) {
-            for (name, p) in props {
-                let (ty, choices, nullable) = short_type(schema, p);
-                let rp = resolve(schema, p);
-                let mut f = Map::new();
-                f.insert("name".into(), json!(name));
-                f.insert("type".into(), json!(ty));
-                f.insert("required".into(), json!(required.contains(&name.as_str())));
-                if nullable {
-                    f.insert("nullable".into(), json!(true));
-                }
-                if rp.get("readOnly").and_then(Value::as_bool) == Some(true) {
-                    f.insert("read_only".into(), json!(true));
-                }
-                if let Some(c) = choices {
-                    f.insert("choices".into(), c);
-                }
-                if let Some(d) = p.get("description").or_else(|| rp.get("description")).and_then(Value::as_str).filter(|d| !d.is_empty()) {
-                    f.insert("description".into(), json!(d.chars().take(160).collect::<String>()));
-                }
-                fields.push(Value::Object(f));
+    let mut seen = std::collections::HashSet::new();
+    for props in objs.iter().filter_map(|o| o.get("properties").and_then(Value::as_object)) {
+        for (name, p) in props {
+            if !seen.insert(name.as_str()) {
+                continue;
             }
+            let (ty, choices, nullable) = short_type(schema, p);
+            let rp = resolve(schema, p);
+            let mut f = Map::new();
+            f.insert("name".into(), json!(name));
+            f.insert("type".into(), json!(ty));
+            f.insert("required".into(), json!(required.contains(&name.as_str())));
+            if nullable {
+                f.insert("nullable".into(), json!(true));
+            }
+            if rp.get("readOnly").and_then(Value::as_bool) == Some(true) {
+                f.insert("read_only".into(), json!(true));
+            }
+            if let Some(c) = choices {
+                f.insert("choices".into(), c);
+            }
+            if let Some(d) = p.get("description").or_else(|| rp.get("description")).and_then(Value::as_str).filter(|d| !d.is_empty()) {
+                f.insert("description".into(), json!(d.chars().take(160).collect::<String>()));
+            }
+            fields.push(Value::Object(f));
         }
     }
 
@@ -163,6 +194,21 @@ mod tests {
         assert_eq!(d["filters"], json!(["name"]));
         assert_eq!(d["actions"].as_array().unwrap().len(), 1);
         assert_eq!(d["actions"][0]["path"], "dcim/sites/{id}/thing");
+    }
+
+    #[test]
+    fn describes_a_body_declared_as_object_or_array() {
+        // NetBox 4 : POST de liste = oneOf [objet, tableau d'objets].
+        let s = json!({
+          "paths": { "/api/dcim/sites/": { "get": {}, "post": { "requestBody": { "content": { "application/json": { "schema": {
+              "oneOf": [ {"$ref": "#/components/schemas/WritableSiteRequest"}, {"type": "array", "items": {"$ref": "#/components/schemas/WritableSiteRequest"}} ] } } } } } } },
+          "components": { "schemas": { "WritableSiteRequest": { "type": "object", "required": ["name", "slug"],
+              "properties": { "name": {"type": "string"}, "slug": {"type": "string"} } } } }
+        });
+        let d = describe(&s, "dcim/sites").unwrap();
+        let names: Vec<&str> = d["fields"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["name", "slug"]);
+        assert_eq!(d["fields"][1]["required"], true);
     }
 
     #[test]

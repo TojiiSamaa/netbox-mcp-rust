@@ -12,6 +12,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ### Open
 - issue #4: waiting for the reporter to replay the reproduction against a binary at or after 0.2.0.
 
+## [0.2.1] — 2026-11-08 <!-- scan:ok -->
+
+Fixes found by a first full pass of the 23 tools against a throw-away NetBox 4.7.4 in dry-run mode.
+
+### Fixed
+- **`netbox_describe_type` returned `fields: []`** (bug NETBOX-2611080739-2et). NetBox 4 declares the list POST body as `oneOf: [object, array of objects]` (bulk create), and the reader looked for `properties` at the root. It now walks `$ref`, `allOf`, `oneOf` and `anyOf`, ignores the array member, merges `required`, and falls back to the PATCH body of the detail endpoint. New unit test with the `oneOf` shape. `actions: []` is correct for types that have no extra endpoint, such as `dcim.site`.
+- **Dry-run of `netbox_update_object`, `netbox_delete_object`, `netbox_bulk_update` and `netbox_bulk_delete` failed with 404 when an id did not exist** and showed no simulated request (bug NETBOX-2611080739-ox4). In dry-run, a missing object no longer stops the preview: the answer carries `exists` (or `found` for bulk), a `warning` that a real call would fail with 404, and `would_send` holds the request that would be sent. A real call still fails with 404 before sending anything.
+- **Reading an object that does not exist is now an answer, not a tool error** (bug NETBOX-2611080739-ca3). Read tools return `{"found": false, "error": {...}}` (no `isError`) for a JSON 404; an unknown address (HTML 404) is still an error. The server itself has no circuit breaker (checked in the source): the ~59 s pause seen after three 404s comes from the MCP client counting each `isError` answer as a failure. This change stops those lookups from tripping it; if the client keeps a breaker, its threshold is the client's setting.
+
+### Added
+- Tests proving the dry-run guarantee: with `NETBOX_DRY_RUN=true`, ten write and destructive tools called with `dry_run: false` all answer `dry_run: true` with a non-empty `would_send`, and the fake NetBox receives **zero** non-GET requests (`dry_run_env_forces_the_simulation_even_when_the_call_says_dry_run_false`). Also `dry_run_previews_updates_and_deletes_of_missing_objects` and `reading_a_missing_object_is_an_answer_not_a_tool_error`. Totals: 32 unit + 18 end-to-end, `cargo clippy --all-targets` clean.
+
+### Changed
+- Dry-run answers of the four tools above gain `exists` / `found` and `warning` fields; `netbox_update_object` in dry-run no longer returns only `current`.
+- Lookups of a missing object by id, trace, rack elevation, render-config and available-* now answer with `found: false` instead of `isError: true`.
+
+### Not done (reported as gaps, to be decided)
+CSV import/export, server-side validation before a write (OPTIONS or `commit=false`), cables, assigning an IP to an interface or VM in one call, tags and journal entries, moving a device between racks.
+
 ## [0.2.0] — 2026-11-08 <!-- scan:ok -->
 
 Safety release: destructive calls can no longer slip through when the server has no way to ask a human. Also adds the Docker image and the release chain.

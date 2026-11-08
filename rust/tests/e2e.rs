@@ -250,3 +250,66 @@ async fn elicitation_accept_and_refuse_when_the_client_supports_it() {
         assert_eq!(sent(&log, "DELETE").len(), deletes);
     }
 }
+
+fn writes_received(log: &Log) -> usize {
+    log.lock().unwrap().iter().filter(|(m, p, _)| m != "GET" && !p.contains("/graphql")).count()
+}
+
+#[tokio::test]
+async fn dry_run_env_forces_the_simulation_even_when_the_call_says_dry_run_false() {
+    // Exigence : avec NETBOX_DRY_RUN=true, aucun appel ne peut écrire, quoi que dise l'argument `dry_run`.
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_DRY_RUN", "true")]).await;
+    let site = json!({ "object_type": "dcim.site" });
+    let with = |extra: Value| {
+        let mut v = site.clone();
+        v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        v.as_object_mut().unwrap().insert("dry_run".into(), json!(false));
+        v
+    };
+    let calls = [
+        ("netbox_create_object", with(json!({ "data": { "name": "x", "slug": "x" } }))),
+        ("netbox_bulk_create", with(json!({ "items": [{ "name": "x", "slug": "x" }] }))),
+        ("netbox_update_object", with(json!({ "object_id": 1, "data": { "status": "retired" } }))),
+        ("netbox_bulk_update", with(json!({ "items": [{ "id": 1, "status": "retired" }] }))),
+        ("netbox_delete_object", with(json!({ "object_id": 1 }))),
+        ("netbox_bulk_delete", with(json!({ "ids": [1] }))),
+        ("netbox_allocate", json!({ "parent_type": "ipam.prefix", "parent_id": 5, "what": "ips", "dry_run": false })),
+        ("netbox_run_script", json!({ "script_id": 2, "commit": true, "dry_run": false })),
+        ("netbox_api_write", json!({ "path": "dcim/sites", "method": "POST", "body": { "name": "x" }, "dry_run": false })),
+        ("netbox_api_delete", json!({ "path": "dcim/sites/1", "dry_run": false })),
+    ];
+    for (tool, args) in calls {
+        let (err, v) = call(&s, tool, args).await;
+        assert!(!err, "{tool}: {v}");
+        assert_eq!(v["dry_run"], true, "{tool}: {v}");
+        assert!(!v["would_send"].as_array().unwrap().is_empty(), "{tool} must show the request it would send");
+    }
+    assert_eq!(writes_received(&log), 0, "NetBox received a write: {:?}", log.lock().unwrap());
+}
+
+#[tokio::test]
+async fn dry_run_previews_updates_and_deletes_of_missing_objects() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_DRY_RUN", "true")]).await;
+    let (err, v) = call(&s, "netbox_update_object", json!({ "object_type": "dcim.site", "object_id": 404, "data": { "status": "retired" } })).await;
+    assert!(!err, "{v}");
+    assert_eq!((v["exists"].clone(), v["would_send"][0]["method"].clone(), v["would_send"][0]["path"].clone()), (json!(false), json!("PATCH"), json!("/api/dcim/sites/404/")));
+    assert!(v["warning"].as_str().unwrap().contains("404"));
+    let (err, v) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 404 })).await;
+    assert!(!err && v["exists"] == false && v["would_send"][0]["method"] == "DELETE", "{v}");
+    // le faux NetBox répond « 1 trouvé » pour une liste : 2 ids demandés = un manquant
+    let (err, v) = call(&s, "netbox_bulk_update", json!({ "object_type": "dcim.site", "items": [{ "id": 1, "status": "x" }, { "id": 404, "status": "x" }] })).await;
+    assert!(!err && v["found"] == 1 && v["warning"].is_string() && v["would_send"][0]["method"] == "PATCH", "{v}");
+    let (err, v) = call(&s, "netbox_bulk_delete", json!({ "object_type": "dcim.site", "ids": [1, 404] })).await;
+    assert!(!err && v["found"] == 1 && v["warning"].is_string() && v["would_send"][0]["method"] == "DELETE", "{v}");
+    assert_eq!(writes_received(&log), 0);
+}
+
+#[tokio::test]
+async fn reading_a_missing_object_is_an_answer_not_a_tool_error() {
+    let (s, _) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false")]).await;
+    let (err, v) = call(&s, "netbox_get_object_by_id", json!({ "object_type": "dcim.site", "object_id": 404 })).await;
+    assert!(!err && v["found"] == false && v["error"]["error_type"] == "not_found", "{v}");
+    // une adresse inconnue (404 HTML) reste une vraie erreur
+    let (err, _) = call(&s, "netbox_api_get", json!({ "path": "nope/nothing" })).await;
+    assert!(err);
+}

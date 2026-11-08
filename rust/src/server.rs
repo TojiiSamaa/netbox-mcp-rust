@@ -281,6 +281,11 @@ impl Session {
 
         match outcome {
             Ok(result) => json!({ "content": [{ "type": "text", "text": render_result(&result, rt.cfg.max_response_chars, offset) }] }),
+            // Lire un objet qui n'existe pas est une réponse (`found: false`), pas une panne : une erreur d'outil
+            // ferait compter ces 404 par le disjoncteur de certains clients, qui couperait alors aussi les appels valides.
+            Err(err) if def.access == Access::Read && err.is(ErrorType::NotFound) && err.details.is_some() => {
+                json!({ "content": [{ "type": "text", "text": json!({ "found": false, "error": err.to_json() }).to_string() }] })
+            }
             Err(err) => {
                 if def.access != Access::Read {
                     self.audit(def, &audit_args, dry_run, ctx_slot.as_deref(), started, Some(err.kind.as_str()));

@@ -380,6 +380,8 @@ fn get_available(a: Args, ctx: Arc<Ctx>) -> BoxFut<Result<Value>> {
 
 // ---------- écriture ----------
 
+const MISSING_IN_DRY_RUN: &str = "Some of these objects do not exist. A real call would fail with 404 and change nothing; the request shown in `would_send` is what would be sent if they existed.";
+
 fn create_object(a: Args, ctx: Arc<Ctx>) -> BoxFut<Result<Value>> {
     boxed(async move {
         let t = resolve(&ctx, a.text("object_type"))?;
@@ -408,11 +410,15 @@ fn update_object(a: Args, ctx: Arc<Ctx>) -> BoxFut<Result<Value>> {
         // Valeurs actuelles des champs touchés : sert de « avant » pour annuler, et échoue tôt si l'objet n'existe pas.
         let mut fields = vec!["id".to_string(), "display".to_string()];
         fields.extend(data.keys().cloned());
-        let current = ctx.nb.get_with_fallback(&obj_path(&t, id), fb(&t, Some(id)).as_deref(), &[("fields".into(), fields.join(","))]).await?;
-        let previous = shape(&ctx, current, false);
+        // En simulation, un objet absent n'arrête pas l'aperçu : la requête simulée est quand même montrée, avec l'avertissement.
+        let previous = match ctx.nb.get_with_fallback(&obj_path(&t, id), fb(&t, Some(id)).as_deref(), &[("fields".into(), fields.join(","))]).await {
+            Ok(current) => Some(shape(&ctx, current, false)),
+            Err(e) if ctx.dry_run && e.is(ErrorType::NotFound) => None,
+            Err(e) => return Err(e),
+        };
         let v = ctx.write(Method::PATCH, &obj_path(&t, id), &[], Some(&Value::Object(data))).await?;
         if ctx.dry_run {
-            return Ok(json!({ "current": previous }));
+            return Ok(json!({ "exists": previous.is_some(), "current": previous, "warning": previous.is_none().then_some(MISSING_IN_DRY_RUN) }));
         }
         Ok(json!({ "updated": pick(shape(&ctx, v, false), &a.strings("fields")), "previous": previous, "revert_with": "netbox_update_object with the values in `previous`" }))
     })
@@ -428,10 +434,14 @@ fn bulk_update(a: Args, ctx: Arc<Ctx>) -> BoxFut<Result<Value>> {
         let q: Vec<(String, String)> = q.into_iter().filter(|(k, _)| k != "id").chain(ids.iter().map(|i| ("id".to_string(), i.to_string()))).collect();
         let existing = ctx.nb.get(&t.endpoint, &q).await?;
         let found = existing.get("count").and_then(Value::as_u64).unwrap_or(0) as usize;
-        if found != ids.len() {
+        let missing = found != ids.len();
+        if missing && !ctx.dry_run {
             return Err(NbError::new(ErrorType::NotFound, format!("{} id(s) requested, {} found: nothing was changed.", ids.len(), found)).hint("Check the ids with netbox_get_objects."));
         }
         let v = ctx.write(Method::PATCH, &t.endpoint, &[], Some(&Value::Array(items.clone()))).await?;
+        if ctx.dry_run {
+            return Ok(json!({ "count": items.len(), "found": found, "warning": missing.then_some(MISSING_IN_DRY_RUN) }));
+        }
         Ok(json!({ "count": items.len(), "updated": pick(shape(&ctx, v, false), &a.strings("fields")) }))
     })
 }
@@ -441,11 +451,14 @@ fn delete_object(a: Args, ctx: Arc<Ctx>) -> BoxFut<Result<Value>> {
         let t = resolve(&ctx, a.text("object_type"))?;
         let id = object_id(&a)?;
         // Instantané avant suppression : permet de recréer l'objet, et échoue tôt s'il n'existe pas.
-        let snapshot = ctx.nb.get_with_fallback(&obj_path(&t, id), fb(&t, Some(id)).as_deref(), &[]).await?;
-        let snapshot = shape(&ctx, snapshot, false);
+        let snapshot = match ctx.nb.get_with_fallback(&obj_path(&t, id), fb(&t, Some(id)).as_deref(), &[]).await {
+            Ok(s) => Some(shape(&ctx, s, false)),
+            Err(e) if ctx.dry_run && e.is(ErrorType::NotFound) => None,
+            Err(e) => return Err(e),
+        };
         ctx.write(Method::DELETE, &obj_path(&t, id), &[], None).await?;
         if ctx.dry_run {
-            return Ok(json!({ "would_delete": snapshot }));
+            return Ok(json!({ "exists": snapshot.is_some(), "would_delete": snapshot, "warning": snapshot.is_none().then_some(MISSING_IN_DRY_RUN) }));
         }
         Ok(json!({ "deleted": snapshot, "note": "NetBox also removes objects that depend on this one (cascade). To undo, recreate it from `deleted` with netbox_create_object; the id will differ." }))
     })
@@ -461,13 +474,14 @@ fn bulk_delete(a: Args, ctx: Arc<Ctx>) -> BoxFut<Result<Value>> {
         let q: Vec<(String, String)> = std::iter::once(("limit".to_string(), ids.len().to_string())).chain(ids.iter().map(|i| ("id".to_string(), i.to_string()))).collect();
         let existing = ctx.nb.get(&t.endpoint, &q).await?;
         let found = existing.get("count").and_then(Value::as_u64).unwrap_or(0) as usize;
-        if found != ids.len() {
+        let missing = found != ids.len();
+        if missing && !ctx.dry_run {
             return Err(NbError::new(ErrorType::NotFound, format!("{} id(s) requested, {} found: nothing was deleted.", ids.len(), found)));
         }
         let body = Value::Array(ids.iter().map(|i| json!({ "id": i })).collect());
         ctx.write(Method::DELETE, &t.endpoint, &[], Some(&body)).await?;
         let key = if ctx.dry_run { "would_delete" } else { "deleted" };
-        Ok(json!({ key: shape(&ctx, existing.get("results").cloned().unwrap_or_default(), false), "count": ids.len() }))
+        Ok(json!({ key: shape(&ctx, existing.get("results").cloned().unwrap_or_default(), false), "count": ids.len(), "found": found, "warning": (ctx.dry_run && missing).then_some(MISSING_IN_DRY_RUN) }))
     })
 }
 
