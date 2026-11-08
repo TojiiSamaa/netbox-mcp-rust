@@ -34,4 +34,4 @@ HTTP : `./nbmcp --transport http --port 8000` (endpoint `/mcp`).
 • `cargo test` : 31 tests unitaires + 12 tests de bout en bout contre un faux NetBox, tous verts
 • ⚠️ Pas encore éprouvé sur un vrai NetBox
 
-📖 Doc complète : `rust/README.md`
+📖 Doc complète : `README.md`
