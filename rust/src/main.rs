@@ -16,6 +16,8 @@ Usage: nbmcp [--transport stdio|http] [--host 127.0.0.1] [--port 8000] [--list-t
              [--enable-plugin-discovery true|false] [--log-level LEVEL]
              [--cors-origins a,b] [--mcp-auth-token TOKEN]
 
+       nbmcp approve [CODE]      operator only: list / approve a request waiting for approval (NETBOX_APPROVAL_DIR)
+
 Options override the environment, which overrides a .env file in the current directory.
   NETBOX_URL, NETBOX_TOKEN            the NetBox instance
   NETBOX_ALLOW_WRITES=true            enable create/update (read-only by default)
@@ -83,7 +85,38 @@ fn build_env(cli: &Cli) -> Env {
     env
 }
 
+/// `nbmcp approve [CODE]` : à lancer par l'opérateur dans son terminal, jamais par l'agent. Sans code, liste les
+/// demandes en attente ; avec un code, montre l'action exacte et demande `y` (exige un terminal).
+fn approve_command() -> Result<(), NbError> {
+    use std::io::{IsTerminal, Write};
+    let bad = |m: String| NbError::new(ErrorType::ConfigError, m);
+    let dir = std::path::PathBuf::from(build_env(&Cli::default()).get("NETBOX_APPROVAL_DIR").cloned().ok_or_else(|| bad("NETBOX_APPROVAL_DIR is not set.".into()))?);
+    let pending = nbmcp::approval::pending(&dir);
+    let Some(code) = std::env::args().nth(2) else {
+        println!("{}", if pending.is_empty() { "No request waiting for approval.".to_string() } else { pending.iter().map(|(c, what)| format!("{c}  {what}")).collect::<Vec<_>>().join("\n") });
+        return Ok(());
+    };
+    if !std::io::stdin().is_terminal() {
+        return Err(bad("nbmcp approve needs a terminal: a human has to answer.".into()));
+    }
+    let what = pending.into_iter().find(|(c, _)| *c == code).map(|(_, what)| what).ok_or_else(|| bad(format!("No pending request {code} (unknown, expired or already used).")))?;
+    print!("{what}\nApprove? [y/N] ");
+    let _ = std::io::stdout().flush();
+    let mut answer = String::new();
+    let _ = std::io::stdin().read_line(&mut answer);
+    if !answer.trim().eq_ignore_ascii_case("y") {
+        println!("Not approved.");
+        return Ok(());
+    }
+    nbmcp::approval::approve(&dir, &code).map_err(bad)?;
+    println!("Approved: the agent can repeat the same call within 10 minutes (once).");
+    Ok(())
+}
+
 async fn run() -> Result<(), NbError> {
+    if std::env::args().nth(1).as_deref() == Some("approve") {
+        return approve_command();
+    }
     let cli = parse_cli()?;
     if cli.help {
         print!("{HELP}");

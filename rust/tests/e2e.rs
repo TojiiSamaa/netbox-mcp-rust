@@ -356,3 +356,52 @@ async fn confirm_is_published_in_the_schema_when_the_fallback_is_on() {
     let (s, _) = start(&base).await;
     assert!(tool_schema(&s, "netbox_delete_object").await["properties"].get("confirm").is_none());
 }
+
+fn approval_dir(name: &str) -> String {
+    std::env::temp_dir().join(format!("nbmcp-e2e-{name}-{}", std::process::id())).to_string_lossy().into_owned()
+}
+
+/// Issue #4, critique de Ezed9 : `confirm: true` est écrit par le modèle, donc contournable par injection de prompt.
+/// Avec NETBOX_APPROVAL_DIR, il est ignoré (même avec NETBOX_CONFIRM_ARG) et le refus porte un code que seul l'opérateur approuve.
+#[tokio::test]
+async fn out_of_band_approval_ignores_the_confirm_the_model_writes() {
+    let dir = approval_dir("refus");
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_ALLOW_DELETE", "true"), ("NETBOX_CONFIRM_ARG", "true"), ("NETBOX_APPROVAL_DIR", &dir)]).await;
+    let (err, v) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 1, "confirm": true })).await;
+    let text = v.to_string();
+    assert!(err && text.contains("confirmation_required") && text.contains("nbmcp approve"), "{v}");
+    assert!(sent(&log, "DELETE").is_empty());
+    // `confirm` n'est plus annoncé : il n'y a rien que le modèle puisse écrire pour approuver.
+    assert!(tool_schema(&s, "netbox_delete_object").await["properties"].get("confirm").is_none());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// --- aller-retour avec l'approbation de l'opérateur (utilise nbmcp::approval) ---
+
+#[tokio::test]
+async fn an_operator_approval_lets_exactly_that_call_through_once() {
+    let dir = approval_dir("aller-retour");
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_ALLOW_DELETE", "true"), ("NETBOX_APPROVAL_DIR", &dir)]).await;
+    let del = json!({ "object_type": "dcim.site", "object_id": 1 });
+    let (err, v) = call(&s, "netbox_delete_object", del.clone()).await;
+    assert!(err && v.to_string().contains("confirmation_required"), "{v}");
+    let pending = nbmcp::approval::pending(std::path::Path::new(&dir));
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    let code = pending[0].0.clone();
+    assert!(v.to_string().contains(&code), "le refus doit porter le code : {v}");
+    // L'opérateur approuve (ce que fait `nbmcp approve`) : un autre objet, ou un autre outil, ne passe pas.
+    nbmcp::approval::approve(std::path::Path::new(&dir), &code).unwrap();
+    let (err, v) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 2 })).await;
+    assert!(err && v.to_string().contains("confirmation_required"), "{v}");
+    let (err, v) = call(&s, "netbox_bulk_delete", json!({ "object_type": "dcim.site", "ids": [1] })).await;
+    assert!(err && v.to_string().contains("confirmation_required"), "{v}");
+    assert!(sent(&log, "DELETE").is_empty());
+    // Le même appel passe, une seule fois.
+    let (err, v) = call(&s, "netbox_delete_object", del.clone()).await;
+    assert!(!err, "{v}");
+    assert_eq!(sent(&log, "DELETE").len(), 1);
+    let (err, v) = call(&s, "netbox_delete_object", del).await;
+    assert!(err && v.to_string().contains("confirmation_required"), "{v}");
+    assert_eq!(sent(&log, "DELETE").len(), 1);
+    let _ = std::fs::remove_dir_all(dir);
+}

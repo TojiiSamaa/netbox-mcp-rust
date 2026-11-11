@@ -28,6 +28,9 @@ pub struct Config {
     pub elicit: Elicit,
     /// Repli opt-in : un client sans elicitation peut confirmer avec `confirm: true`.
     pub confirm_arg: bool,
+    /// Approbation hors bande : dossier où l'opérateur approuve (`nbmcp approve`). Il l'emporte sur `confirm_arg`,
+    /// car `confirm: true` est écrit par le modèle.
+    pub approval_dir: Option<std::path::PathBuf>,
     /// Motifs de types écrivables (`dcim.*`, `netbox_dns.zone`, `*`). `users.*` n'est jamais inclus par `*`.
     pub write_allow: Vec<String>,
     pub write_deny: Vec<String>,
@@ -116,6 +119,7 @@ pub fn load_config(env: &Env) -> Result<Config> {
         allow_delete: flag(env, "NETBOX_ALLOW_DELETE", false)?,
         dry_run: flag(env, "NETBOX_DRY_RUN", false)?,
         confirm_arg: flag(env, "NETBOX_CONFIRM_ARG", false)?,
+        approval_dir: text(env, "NETBOX_APPROVAL_DIR").map(Into::into),
         elicit: match text(env, "NETBOX_ELICIT").map(|v| v.to_ascii_lowercase()).as_deref() {
             None | Some("true") | Some("destructive") => Elicit::Destructive,
             Some("false") | Some("off") | Some("0") => Elicit::Off,
