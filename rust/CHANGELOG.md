@@ -8,6 +8,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Added
+- **Out-of-band approval** (`NETBOX_APPROVAL_DIR`, issue #4, review by Ezed9). `confirm: true` is an argument, so a prompt-injected model can write it. With this directory set, a destructive call that cannot be confirmed through elicitation (HTTP, client without elicitation) is refused with a one-time code; the operator approves it in their own terminal with the new `nbmcp approve <code>` (shows the exact action, asks `y`, refuses to run without a terminal; `nbmcp approve` alone lists what is waiting). The same call, repeated identically (tool and arguments, key order ignored), then passes once within 10 minutes; another object or tool does not inherit the approval. `confirm: true` is ignored and not published in the schema in this mode, even with `NETBOX_CONFIRM_ARG`. Limit: the directory must be out of the agent's reach, otherwise it can approve itself. Tests: `out_of_band_approval_ignores_the_confirm_the_model_writes`, `an_operator_approval_lets_exactly_that_call_through_once`, and unit tests of `approval.rs`.
+
 ### Open
 - issue #4: waiting for the reporter to replay the reproduction against a binary at or after 1.2.0.
 

@@ -65,7 +65,7 @@ fn tool_json(def: &ToolDef, cfg: &crate::config::Config) -> Value {
         input.push(schema::boolean("dry_run").opt().desc("Show what would be sent without sending anything."));
         // Le schéma publié est fermé (`additionalProperties: false`) : sans `confirm` ici, un client qui valide
         // ses arguments ne pourrait jamais envoyer la confirmation que le refus lui demande.
-        if cfg.confirm_arg && confirmation_needed(cfg, def) {
+        if cfg.confirm_arg && cfg.approval_dir.is_none() && confirmation_needed(cfg, def) {
             input.push(schema::boolean("confirm").opt().desc("Send true only after the user has explicitly agreed to this exact action."));
         }
     }
@@ -202,6 +202,17 @@ impl Session {
         };
         let can_ask = self.out.is_some() && self.elicitation.load(Ordering::Relaxed);
         if !can_ask {
+            // Approbation hors bande : `confirm: true` est ignoré, seul l'opérateur peut approuver (voir `approval`).
+            if let Some(dir) = &cfg.approval_dir {
+                let message = def.confirmation.as_ref().map(|c| c(args)).unwrap_or_else(|| format!("{} {}", def.name, args.to_value()));
+                return match crate::approval::check(dir, def.name, &args.to_value(), &message) {
+                    Ok(crate::approval::Verdict::Approved) => Ok(()),
+                    Ok(crate::approval::Verdict::Pending(code)) => Err(NbError::new(ErrorType::ConfirmationRequired, format!("{} needs the operator's approval. Nothing was done. Approval code: {code}.", def.name)).hint(format!(
+                        "Tell the operator to run `nbmcp approve {code}` in their own terminal, where they will see this exact action, then repeat the same call (valid 10 minutes, works once). You cannot approve it yourself; `confirm: true` is ignored."
+                    ))),
+                    Err(e) => Err(NbError::new(ErrorType::ConfirmationRequired, format!("{} needs the operator's approval, and the approval directory is unusable: {e}. Nothing was done.", def.name))),
+                };
+            }
             return if cfg.confirm_arg && confirm_arg { Ok(()) } else { Err(refused()) };
         }
         let (Some(confirmation), Some(out)) = (&def.confirmation, &self.out) else { return Err(refused()) };

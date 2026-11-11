@@ -1,6 +1,7 @@
 //! nbmcp : serveur MCP pour NetBox (lecture, écriture gardée, plugins).
 #![allow(clippy::result_large_err)] // NbError porte un message, un conseil et des détails : il est rare et gros.
 
+pub mod approval;
 pub mod client;
 pub mod config;
 pub mod error;
