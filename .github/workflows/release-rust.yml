@@ -29,8 +29,45 @@ jobs:
     name: Tests Rust
     uses: ./.github/workflows/ci-rust.yml
 
-  prepare:
+  # Porte de sécurité : pas de release s il reste une vulnérabilité connue dans les crates
+  # (cargo audit) ni une CRITICAL/HIGH corrigeable dans l image construite (Trivy).
+  securite:
+    name: Sécurité crates (cargo audit)
+    uses: ./.github/workflows/security-rust.yml
+
+  scan-image:
+    name: Sécurité image (Trivy, porte critique/haute)
     needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Build image (not pushed)
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: rust
+          file: rust/Dockerfile
+          load: true
+          push: false
+          platforms: linux/amd64
+          tags: netbox-mcp-rust:gate
+      - name: Trivy gate (CRITICAL,HIGH fixable => fail)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
+        with:
+          image-ref: netbox-mcp-rust:gate
+          vuln-type: os,library
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+  prepare:
+    needs: [tests, securite, scan-image]
     name: Resolve version
     runs-on: ubuntu-latest
     outputs:
