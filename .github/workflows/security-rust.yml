@@ -30,4 +30,4 @@ jobs:
           cargo install cargo-audit --locked
       - name: cargo audit
         working-directory: rust
-        run: cargo audit --deny warnings --ignore-source-errors 2>&1 | tee /tmp/audit.txt || true; cargo audit
+        run: cargo audit
