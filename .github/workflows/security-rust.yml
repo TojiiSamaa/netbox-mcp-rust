@@ -1,0 +1,33 @@
+name: Security Rust
+
+# Audit des crates de rust/Cargo.lock contre la base RustSec.
+# - PR qui touche rust/ ; tous les jours (une nouvelle advisory peut tomber sans changement de code)
+# - appelé par release-rust.yml (needs: securite) : pas de release avec une vulnérabilité connue.
+# Échoue sur toute vulnérabilité (les avertissements « unmaintained » restent affichés, sans bloquer).
+
+on:
+  pull_request:
+    paths: ["rust/**", ".github/workflows/security-rust.yml"]
+  schedule:
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Install cargo-audit
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cargo install cargo-audit --locked
+      - name: cargo audit
+        working-directory: rust
+        run: cargo audit --deny warnings --ignore-source-errors 2>&1 | tee /tmp/audit.txt || true; cargo audit
