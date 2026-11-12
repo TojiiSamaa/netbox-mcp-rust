@@ -8,6 +8,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [1.2.5] — 2026-11-12
+
+### Security
+- Image: rust:1-alpine and alpine:3 pinned by digest; apk upgrade in the final stage (openssl, musl, zlib, util-linux fixes).
+- CI: the daily rescan and the PR scan now target this repository image (ghcr.io/tojiisamaa/netbox-mcp-rust), not the upstream Python image whose 74 alerts were not ours; cargo audit (daily, PR, release gate) and a Trivy CRITICAL/HIGH gate before any release.
+
 ## [1.2.4] — 2026-11-12
 
 ### Added
