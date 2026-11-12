@@ -1,13 +1,14 @@
 name: Container Scan
 
+# Image Rust du dépôt (rust/Dockerfile). Avant 1112 ce workflow construisait le Dockerfile Python
+# de l amont, que ce fork ne publie pas. Échoue sur toute vulnérabilité CRITICAL/HIGH corrigeable.
+
 on:
   workflow_dispatch:
   pull_request:
     paths:
-      - "**/*.py"
-      - "pyproject.toml"
-      - "uv.lock"
-      - "Dockerfile"
+      - "rust/**"
+      - ".github/workflows/release-rust.yml"
       - ".github/workflows/container-scan.yaml"
 
 concurrency:
@@ -37,18 +38,19 @@ jobs:
       - name: Build image
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
-          context: .
+          context: rust
+          file: rust/Dockerfile
           load: true
           push: false
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          tags: netbox-mcp-server:scan
+          tags: netbox-mcp-rust:scan
 
       - name: Scan image for vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: netbox-mcp-server:scan
+          image-ref: netbox-mcp-rust:scan
           format: json
           output: trivy-output.json
           vuln-type: os,library
@@ -102,7 +104,7 @@ jobs:
               : '## Vulnerability Scan: Passed';
             const commitSha = process.env.COMMIT_SHA;
             const marker = '<!-- trivy-scan-results -->';
-            const body = `${marker}\n${heading}\n\n**Image:** \`netbox-mcp-server:scan\`\n\n${table}\n*Commit: ${commitSha}*`;
+            const body = `${marker}\n${heading}\n\n**Image:** \`netbox-mcp-rust:scan\`\n\n${table}\n*Commit: ${commitSha}*`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number,
             });

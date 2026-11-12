@@ -1,5 +1,11 @@
 name: Scheduled Container Rescan
 
+# Rescan quotidien de l'image que CE dépôt publie (ghcr.io/tojiisamaa/netbox-mcp-rust, Rust).
+# Avant 1112 il scannait docker.io/netboxlabs/netbox-mcp-server:latest (image Python de l'amont,
+# que ce fork ne publie pas) : les 74 alertes ouvertes venaient de là, hors de notre portée.
+# Même clé d'analyse (container-rescan.yaml:rescan) : les anciennes alertes se ferment toutes seules
+# au premier envoi SARIF qui ne les contient plus.
+
 on:
   schedule:
     - cron: '0 6 * * *'
@@ -16,7 +22,7 @@ jobs:
       security-events: write
     env:
       TRIVY_DISABLE_VEX_NOTICE: "true"
-      IMAGE_REF: docker.io/netboxlabs/netbox-mcp-server:latest
+      IMAGE_REF: ghcr.io/tojiisamaa/netbox-mcp-rust:latest
 
     steps:
       - name: Pull image
@@ -35,6 +41,7 @@ jobs:
           exit-code: "0"
 
       - name: Build rescan summary
+        id: summary
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
@@ -44,7 +51,9 @@ jobs:
               (r.Vulnerabilities || []).map(v => ({ ...v, target: r.Target }))
             );
             const SEVERITY_LABEL = { CRITICAL: '🔴 **CRITICAL**', HIGH: '🟠 **HIGH**', MEDIUM: '🟡 MEDIUM', LOW: '⚪ LOW' };
-            let summary = `### Rescan Complete\n\n**Image:** \`${process.env.IMAGE_REF}\`\n**Scanned at:** ${new Date().toISOString().replace('T', ' ').split('.')[0]} UTC\n\n`;
+            const blocking = vulns.filter(v => v.Severity === 'CRITICAL' || v.Severity === 'HIGH').length;
+            core.setOutput('blocking', String(blocking));
+            let summary = `### Rescan Complete\n\n**Image:** \`${process.env.IMAGE_REF}\`\n**Scanned at:** ${new Date().toISOString().replace('T', ' ').split('.')[0]} UTC\n**Total:** ${vulns.length} (critical/high corrigeables: ${blocking})\n\n`;
             if (vulns.length === 0) {
               summary += '_No vulnerabilities found._\n';
             } else {
@@ -52,7 +61,7 @@ jobs:
               for (const v of vulns) {
                 const title = (v.Title || '').replace(/\|/g, '\\|').substring(0, 80);
                 const cve = v.PrimaryURL ? `[${v.VulnerabilityID}](${v.PrimaryURL})` : v.VulnerabilityID;
-                const source = (v.target || '').replace(/\|/g, '\|');
+                const source = (v.target || '').replace(/\|/g, '\\|');
                 summary += `| ${source} | ${v.PkgName} | ${cve} | ${SEVERITY_LABEL[v.Severity] || v.Severity} | ${v.InstalledVersion} | ${v.FixedVersion || 'N/A'} | ${title} |\n`;
               }
             }
@@ -67,3 +76,10 @@ jobs:
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: trivy-results.sarif
+
+      # Le rescan quotidien échoue (=> visible dans Actions) s'il reste du critique/haut corrigeable.
+      - name: Fail on blocking vulnerabilities
+        if: steps.summary.outputs.blocking != '0'
+        run: |
+          echo "Critical/high fixable vulnerabilities in $IMAGE_REF: ${{ steps.summary.outputs.blocking }}"
+          exit 1
