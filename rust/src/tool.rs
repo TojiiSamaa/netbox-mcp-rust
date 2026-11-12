@@ -42,25 +42,41 @@ impl Args {
         self.str(k).unwrap_or("")
     }
     pub fn int(&self, k: &str) -> Option<i64> {
-        self.0.get(k).and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+        self.0
+            .get(k)
+            .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
     }
     pub fn flag(&self, k: &str) -> bool {
         self.0.get(k).and_then(Value::as_bool).unwrap_or(false)
     }
     pub fn obj(&self, k: &str) -> Map<String, Value> {
-        self.0.get(k).and_then(Value::as_object).cloned().unwrap_or_default()
+        self.0
+            .get(k)
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default()
     }
     pub fn list(&self, k: &str) -> Vec<Value> {
-        self.0.get(k).and_then(Value::as_array).cloned().unwrap_or_default()
+        self.0
+            .get(k)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
     }
     pub fn strings(&self, k: &str) -> Vec<String> {
-        self.list(k).iter().filter_map(|v| v.as_str().map(String::from)).collect()
+        self.list(k)
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect()
     }
     /// « chaîne ou liste de chaînes » (ordre de tri).
     pub fn string_or_list(&self, k: &str) -> Vec<String> {
         match self.0.get(k) {
             Some(Value::String(s)) => vec![s.clone()],
-            Some(Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+            Some(Value::Array(a)) => a
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
             _ => vec![],
         }
     }
@@ -82,7 +98,13 @@ pub struct Ctx {
 impl Ctx {
     /// Toute écriture passe par ici : en simulation on note la requête et on n'envoie rien (renvoie `Null`) ;
     /// sinon on l'envoie et on la consigne pour le journal d'audit.
-    pub async fn write(&self, method: Method, path: &str, query: &[(String, String)], body: Option<&Value>) -> Result<Value> {
+    pub async fn write(
+        &self,
+        method: Method,
+        path: &str,
+        query: &[(String, String)],
+        body: Option<&Value>,
+    ) -> Result<Value> {
         if self.dry_run {
             self.dry_log.lock().unwrap().push(json!({ "method": method.as_str(), "path": format!("/api/{path}/"), "query": query, "body": body }));
             return Ok(Value::Null);
@@ -92,7 +114,10 @@ impl Ctx {
             Ok(_) => json!("ok"),
             Err(e) => json!(e.kind.as_str()),
         };
-        self.writes.lock().unwrap().push(json!({ "method": method.as_str(), "path": path, "outcome": outcome }));
+        self.writes
+            .lock()
+            .unwrap()
+            .push(json!({ "method": method.as_str(), "path": path, "outcome": outcome }));
         result
     }
 }

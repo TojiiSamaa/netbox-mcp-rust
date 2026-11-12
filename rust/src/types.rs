@@ -43,12 +43,26 @@ pub fn endpoint_from_rest_url(url: &str) -> Option<String> {
 
 impl TypeRegistry {
     pub fn builtin() -> Self {
-        let raw: BTreeMap<String, Raw> = serde_json::from_str(include_str!("../types.json")).expect("types.json invalide");
+        let raw: BTreeMap<String, Raw> =
+            serde_json::from_str(include_str!("../types.json")).expect("types.json invalide");
         let map = raw
             .into_iter()
-            .map(|(key, r)| (key.clone(), TypeInfo { key, name: r.name, endpoint: r.endpoint, fallback: r.fallback, plugin: false }))
+            .map(|(key, r)| {
+                (
+                    key.clone(),
+                    TypeInfo {
+                        key,
+                        name: r.name,
+                        endpoint: r.endpoint,
+                        fallback: r.fallback,
+                        plugin: false,
+                    },
+                )
+            })
             .collect();
-        TypeRegistry { map: RwLock::new(map) }
+        TypeRegistry {
+            map: RwLock::new(map),
+        }
     }
 
     pub fn keys(&self) -> Vec<String> {
@@ -81,17 +95,32 @@ impl TypeRegistry {
             return Ok(t.clone());
         }
         let model = w.rsplit('.').next().unwrap_or(&w);
-        let same_model: Vec<&TypeInfo> = map.values().filter(|t| t.key.rsplit('.').next() == Some(model)).collect();
+        let same_model: Vec<&TypeInfo> = map
+            .values()
+            .filter(|t| t.key.rsplit('.').next() == Some(model))
+            .collect();
         if same_model.len() == 1 && !w.contains('.') {
             return Ok(same_model[0].clone());
         }
-        let mut near: Vec<&str> = map.keys().filter(|k| k.contains(model) || model.contains(k.rsplit('.').next().unwrap_or(""))).map(String::as_str).take(8).collect();
+        let mut near: Vec<&str> = map
+            .keys()
+            .filter(|k| k.contains(model) || model.contains(k.rsplit('.').next().unwrap_or("")))
+            .map(String::as_str)
+            .take(8)
+            .collect();
         near.sort_unstable();
-        let mut e = NbError::new(ErrorType::InvalidInput, format!("Unknown object_type \"{wanted}\"."));
+        let mut e = NbError::new(
+            ErrorType::InvalidInput,
+            format!("Unknown object_type \"{wanted}\"."),
+        );
         e = e.hint(if near.is_empty() {
-            "Call netbox_list_object_types for the valid values (core and plugin types).".to_string()
+            "Call netbox_list_object_types for the valid values (core and plugin types)."
+                .to_string()
         } else {
-            format!("Did you mean: {}? netbox_list_object_types lists them all.", near.join(", "))
+            format!(
+                "Did you mean: {}? netbox_list_object_types lists them all.",
+                near.join(", ")
+            )
         });
         Err(e)
     }
@@ -101,18 +130,45 @@ impl TypeRegistry {
         let mut found: Vec<TypeInfo> = Vec::new();
         let mut offset = 0;
         loop {
-            let q = [("limit".to_string(), "100".to_string()), ("offset".to_string(), offset.to_string())];
-            let page = nb.get_with_fallback("core/object-types", Some("extras/object-types"), &q).await?;
-            let results = page.get("results").and_then(Value::as_array).cloned().unwrap_or_default();
+            let q = [
+                ("limit".to_string(), "100".to_string()),
+                ("offset".to_string(), offset.to_string()),
+            ];
+            let page = nb
+                .get_with_fallback("core/object-types", Some("extras/object-types"), &q)
+                .await?;
+            let results = page
+                .get("results")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             for t in &results {
-                let (Some(app), Some(model)) = (t.get("app_label").and_then(Value::as_str), t.get("model").and_then(Value::as_str)) else { continue };
-                let Some(endpoint) = t.get("rest_api_endpoint").and_then(Value::as_str).and_then(endpoint_from_rest_url) else { continue };
+                let (Some(app), Some(model)) = (
+                    t.get("app_label").and_then(Value::as_str),
+                    t.get("model").and_then(Value::as_str),
+                ) else {
+                    continue;
+                };
+                let Some(endpoint) = t
+                    .get("rest_api_endpoint")
+                    .and_then(Value::as_str)
+                    .and_then(endpoint_from_rest_url)
+                else {
+                    continue;
+                };
                 found.push(TypeInfo {
                     key: format!("{app}.{model}"),
-                    name: t.get("display").and_then(Value::as_str).unwrap_or(model).to_string(),
+                    name: t
+                        .get("display")
+                        .and_then(Value::as_str)
+                        .unwrap_or(model)
+                        .to_string(),
                     endpoint,
                     fallback: None,
-                    plugin: t.get("is_plugin_model").and_then(Value::as_bool).unwrap_or(false),
+                    plugin: t
+                        .get("is_plugin_model")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
                 });
             }
             if page.get("next").map_or(true, Value::is_null) || results.is_empty() {
@@ -163,9 +219,18 @@ mod tests {
 
     #[test]
     fn rest_url_with_prefix_and_plugins() {
-        assert_eq!(endpoint_from_rest_url("/api/plugins/netbox-dns/zones/").unwrap(), "plugins/netbox-dns/zones");
-        assert_eq!(endpoint_from_rest_url("/netbox/api/dcim/sites/").unwrap(), "dcim/sites");
-        assert_eq!(endpoint_from_rest_url("https://h/api/dcim/sites/?x=1").unwrap(), "dcim/sites");
+        assert_eq!(
+            endpoint_from_rest_url("/api/plugins/netbox-dns/zones/").unwrap(),
+            "plugins/netbox-dns/zones"
+        );
+        assert_eq!(
+            endpoint_from_rest_url("/netbox/api/dcim/sites/").unwrap(),
+            "dcim/sites"
+        );
+        assert_eq!(
+            endpoint_from_rest_url("https://h/api/dcim/sites/?x=1").unwrap(),
+            "dcim/sites"
+        );
         assert!(endpoint_from_rest_url("/nothing/").is_none());
         assert!(endpoint_from_rest_url("/api/").is_none());
     }

@@ -47,7 +47,12 @@ fn parse_cli() -> Result<Cli, NbError> {
             Some((f, v)) if f.starts_with("--") => (f.to_string(), Some(v.to_string())),
             _ => (a.clone(), None),
         };
-        let mut value = |name: &str| inline.clone().or_else(|| it.next()).ok_or_else(|| bad(format!("{name} needs a value.")));
+        let mut value = |name: &str| {
+            inline
+                .clone()
+                .or_else(|| it.next())
+                .ok_or_else(|| bad(format!("{name} needs a value.")))
+        };
         match flag.as_str() {
             "--http" => cli.http = true,
             "--transport" => match value("--transport")?.as_str() {
@@ -64,10 +69,15 @@ fn parse_cli() -> Result<Cli, NbError> {
             "--netbox-token" => cli.set.push(("NETBOX_TOKEN", value("--netbox-token")?)),
             "--verify-ssl" => cli.set.push(("VERIFY_SSL", "true".into())),
             "--no-verify-ssl" => cli.set.push(("VERIFY_SSL", "false".into())),
-            "--enable-plugin-discovery" => cli.set.push(("ENABLE_PLUGIN_DISCOVERY", value("--enable-plugin-discovery")?)),
+            "--enable-plugin-discovery" => cli.set.push((
+                "ENABLE_PLUGIN_DISCOVERY",
+                value("--enable-plugin-discovery")?,
+            )),
             "--log-level" => cli.set.push(("LOG_LEVEL", value("--log-level")?)),
             "--cors-origins" => cli.set.push(("CORS_ORIGINS", value("--cors-origins")?)),
-            "--mcp-auth-token" => cli.set.push(("NETBOX_MCP_TOKEN", value("--mcp-auth-token")?)),
+            "--mcp-auth-token" => cli
+                .set
+                .push(("NETBOX_MCP_TOKEN", value("--mcp-auth-token")?)),
             other => return Err(bad(format!("Unknown option \"{other}\". See --help."))),
         }
     }
@@ -90,16 +100,42 @@ fn build_env(cli: &Cli) -> Env {
 fn approve_command() -> Result<(), NbError> {
     use std::io::{IsTerminal, Write};
     let bad = |m: String| NbError::new(ErrorType::ConfigError, m);
-    let dir = std::path::PathBuf::from(build_env(&Cli::default()).get("NETBOX_APPROVAL_DIR").cloned().ok_or_else(|| bad("NETBOX_APPROVAL_DIR is not set.".into()))?);
+    let dir = std::path::PathBuf::from(
+        build_env(&Cli::default())
+            .get("NETBOX_APPROVAL_DIR")
+            .cloned()
+            .ok_or_else(|| bad("NETBOX_APPROVAL_DIR is not set.".into()))?,
+    );
     let pending = nbmcp::approval::pending(&dir);
     let Some(code) = std::env::args().nth(2) else {
-        println!("{}", if pending.is_empty() { "No request waiting for approval.".to_string() } else { pending.iter().map(|(c, what)| format!("{c}  {what}")).collect::<Vec<_>>().join("\n") });
+        println!(
+            "{}",
+            if pending.is_empty() {
+                "No request waiting for approval.".to_string()
+            } else {
+                pending
+                    .iter()
+                    .map(|(c, what)| format!("{c}  {what}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        );
         return Ok(());
     };
     if !std::io::stdin().is_terminal() {
-        return Err(bad("nbmcp approve needs a terminal: a human has to answer.".into()));
+        return Err(bad(
+            "nbmcp approve needs a terminal: a human has to answer.".into(),
+        ));
     }
-    let what = pending.into_iter().find(|(c, _)| *c == code).map(|(_, what)| what).ok_or_else(|| bad(format!("No pending request {code} (unknown, expired or already used).")))?;
+    let what = pending
+        .into_iter()
+        .find(|(c, _)| *c == code)
+        .map(|(_, what)| what)
+        .ok_or_else(|| {
+            bad(format!(
+                "No pending request {code} (unknown, expired or already used)."
+            ))
+        })?;
     print!("{what}\nApprove? [y/N] ");
     let _ = std::io::stdout().flush();
     let mut answer = String::new();
@@ -129,7 +165,12 @@ async fn run() -> Result<(), NbError> {
     let env = build_env(&cli);
     let cfg = load_config(&env)?;
     nbmcp::log::set_level(&cfg.log_level);
-    let (mcp_token, allowed_hosts, cors_origins, passthrough) = (cfg.mcp_token.clone(), cfg.allowed_hosts.clone(), cfg.cors_origins.clone(), cfg.passthrough);
+    let (mcp_token, allowed_hosts, cors_origins, passthrough) = (
+        cfg.mcp_token.clone(),
+        cfg.allowed_hosts.clone(),
+        cfg.cors_origins.clone(),
+        cfg.passthrough,
+    );
     let registry = Registry::new(Runtime::new(cfg).await?);
 
     if cli.list_tools {
@@ -140,10 +181,32 @@ async fn run() -> Result<(), NbError> {
     }
 
     if cli.http {
-        let port_text = cli.port.or_else(|| env.get("PORT").cloned()).unwrap_or_else(|| "8000".into());
-        let port: u16 = port_text.parse().ok().filter(|p| *p >= 1).ok_or_else(|| NbError::new(ErrorType::ConfigError, format!("--port: \"{port_text}\" is not a valid port.")))?;
-        let host = cli.host.or_else(|| env.get("HOST").cloned()).unwrap_or_else(|| "127.0.0.1".into());
-        return http::serve(registry, HttpOptions { host, port, token: mcp_token, allowed_hosts, cors_origins, passthrough }).await;
+        let port_text = cli
+            .port
+            .or_else(|| env.get("PORT").cloned())
+            .unwrap_or_else(|| "8000".into());
+        let port: u16 = port_text.parse().ok().filter(|p| *p >= 1).ok_or_else(|| {
+            NbError::new(
+                ErrorType::ConfigError,
+                format!("--port: \"{port_text}\" is not a valid port."),
+            )
+        })?;
+        let host = cli
+            .host
+            .or_else(|| env.get("HOST").cloned())
+            .unwrap_or_else(|| "127.0.0.1".into());
+        return http::serve(
+            registry,
+            HttpOptions {
+                host,
+                port,
+                token: mcp_token,
+                allowed_hosts,
+                cors_origins,
+                passthrough,
+            },
+        )
+        .await;
     }
 
     serve_stdio(registry).await;
@@ -193,7 +256,14 @@ async fn serve_stdio(registry: Arc<Registry>) {
 #[tokio::main]
 async fn main() {
     if let Err(err) = run().await {
-        eprintln!("[nbmcp] {}{}", err.message, err.hint.as_ref().map(|h| format!("\n        {h}")).unwrap_or_default());
+        eprintln!(
+            "[nbmcp] {}{}",
+            err.message,
+            err.hint
+                .as_ref()
+                .map(|h| format!("\n        {h}"))
+                .unwrap_or_default()
+        );
         std::process::exit(1);
     }
 }
