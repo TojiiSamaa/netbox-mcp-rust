@@ -2,15 +2,30 @@
 //! Les redirections ne sont pas suivies : un POST redirigé http→https perd son corps et l'écriture
 //! échouerait sans bruit, mieux vaut dire à l'opérateur de corriger NETBOX_URL.
 
-use crate::config::Config;
+use crate::config::{Config, MOCK_ORIGIN};
+use crate::mock::Mock;
+use crate::stats::Stats;
+use std::sync::Arc;
 use crate::error::{ErrorType, NbError, Result};
 use reqwest::Method;
 use serde_json::{json, Map, Value};
 use std::time::Duration;
 
+/// Le transport réseau. `Tripwire` remplace le vrai client en mode test : l'utiliser panique.
+#[derive(Clone)]
+enum Transport {
+    Http(reqwest::Client),
+    Tripwire,
+}
+
+/// UN SEUL point d'entrée/sortie réseau du serveur (hors écoute MCP de `http.rs`) : `NetBox::send`.
+/// En mode test, `mock` répond à la place du réseau et le vrai client n'est jamais construit ;
+/// toute adresse autre que `MOCK_ORIGIN` est coupée (`TEST_MODE_EGRESS_BLOCKED`) et comptée.
 #[derive(Clone)]
 pub struct NetBox {
-    http: reqwest::Client,
+    transport: Transport,
+    mock: Option<Arc<Mock>>,
+    stats: Arc<Stats>,
     base: String,
     token: Option<String>,
 }
@@ -61,7 +76,10 @@ pub fn query_pairs(map: &Map<String, Value>) -> Vec<(String, String)> {
 }
 
 impl NetBox {
-    pub fn new(cfg: &Config) -> Result<Self> {
+    pub fn new(cfg: &Config, stats: Arc<Stats>) -> Result<Self> {
+        if cfg.test_mode {
+            return Ok(NetBox { transport: Transport::Tripwire, mock: Some(Arc::new(Mock::new())), stats, base: MOCK_ORIGIN.to_string(), token: None });
+        }
         let http = reqwest::Client::builder()
             .danger_accept_invalid_certs(!cfg.verify_ssl)
             .redirect(reqwest::redirect::Policy::none())
@@ -70,7 +88,7 @@ impl NetBox {
             .user_agent(concat!("nbmcp/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| NbError::new(ErrorType::ConfigError, format!("Cannot build the HTTP client: {e}")))?;
-        Ok(NetBox { http, base: cfg.netbox_url.clone(), token: cfg.token.clone() })
+        Ok(NetBox { transport: Transport::Http(http), mock: None, stats, base: cfg.netbox_url.clone(), token: cfg.token.clone() })
     }
 
     pub fn with_token(&self, token: String) -> Self {
@@ -114,19 +132,31 @@ impl NetBox {
     }
 
     async fn send(&self, method: Method, url: String, query: &[(String, String)], body: Option<&Value>) -> Result<Value> {
-        let mut req = self
-            .http
-            .request(method.clone(), &url)
-            .header("Authorization", self.auth()?)
-            .header("Accept", "application/json")
-            .query(query);
-        if let Some(b) = body {
-            req = req.json(b);
-        }
-        let resp = req.send().await.map_err(|e| self.transport_error(&e))?;
-        let status = resp.status();
-        let location = resp.headers().get("location").and_then(|v| v.to_str().ok()).map(String::from);
-        let text = resp.text().await.map_err(|e| self.transport_error(&e))?;
+        let (status, text, location) = if let Some(mock) = &self.mock {
+            // Mode test : seul le mock répond ; toute autre adresse est coupée avant d'aller plus loin.
+            let Some(path) = url.strip_prefix(&format!("{MOCK_ORIGIN}/")) else {
+                self.stats.egress_blocked();
+                return Err(NbError::new(ErrorType::TestModeEgressBlocked, "Test mode: a request to an address other than the simulated NetBox was cut. Nothing was sent.")
+                    .hint("This is a guarantee of MCP_TEST_MODE, not a fault: no real network traffic can leave in test mode."));
+            };
+            let path = path.strip_prefix("api/").unwrap_or(path);
+            if method != Method::GET {
+                self.stats.mock_write();
+            }
+            let (code, json) = mock.reply(&method, path, query, body);
+            (reqwest::StatusCode::from_u16(code).unwrap_or(reqwest::StatusCode::OK), json.map(|j| j.to_string()).unwrap_or_default(), None)
+        } else {
+            let Transport::Http(http) = &self.transport else { panic!("Tripwire: the real network transport was used outside test mode") };
+            let mut req = http.request(method.clone(), &url).header("Authorization", self.auth()?).header("Accept", "application/json").query(query);
+            if let Some(b) = body {
+                req = req.json(b);
+            }
+            let resp = req.send().await.map_err(|e| self.transport_error(&e))?;
+            let status = resp.status();
+            let location = resp.headers().get("location").and_then(|v| v.to_str().ok()).map(String::from);
+            let text = resp.text().await.map_err(|e| self.transport_error(&e))?;
+            (status, text, location)
+        };
         if status.is_redirection() {
             return Err(NbError::new(
                 ErrorType::BadResponse,
@@ -201,6 +231,24 @@ fn http_error(status: u16, body: Option<Value>, text: &str, method: &Method, url
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_cfg() -> Config {
+        let env: crate::config::Env = [("MCP_TEST_MODE".to_string(), "1".to_string())].into_iter().collect();
+        crate::config::load_config(&env).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_mode_cuts_every_address_but_the_mock_and_counts_it() {
+        let stats = Arc::new(Stats::new());
+        let nb = NetBox::new(&test_cfg(), stats.clone()).unwrap();
+        let ok = nb.get("status", &[]).await.unwrap();
+        assert!(ok["netbox-version"].is_string());
+        for url in ["http://127.0.0.1:9/api/status/", "https://netbox.example.com/api/status/", "mock://other/api/x"] {
+            let e = nb.send(Method::GET, url.to_string(), &[], None).await.unwrap_err();
+            assert!(e.is(ErrorType::TestModeEgressBlocked), "{url}");
+        }
+        assert_eq!(stats.snapshot()["egress_blocked"], 3);
+    }
 
     #[test]
     fn paths_are_normalised_and_confined() {

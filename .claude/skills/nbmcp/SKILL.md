@@ -5,6 +5,8 @@ description: Use when reading or changing NetBox through the nbmcp Rust MCP serv
 
 # nbmcp (NetBox MCP, Rust)
 
+Full portable reference (all tools, parameters, recipes, errors): `skill/netbox-mcp-rust/SKILL.md`.
+
 ## Tools
 - Read (always): `netbox_get_objects`, `netbox_get_object_by_id`, `netbox_search_objects`, `netbox_get_changelogs`, `netbox_list_object_types`, `netbox_describe_type`, `netbox_get_status`, `netbox_api_get`, `netbox_graphql` (queries only), `netbox_trace`, `netbox_rack_elevation`, `netbox_render_config`, `netbox_get_available`.
 - Write (`NETBOX_ALLOW_WRITES=true`): `netbox_create_object`, `netbox_bulk_create`, `netbox_update_object` (returns `previous`), `netbox_bulk_update`, `netbox_allocate`, `netbox_api_write`.

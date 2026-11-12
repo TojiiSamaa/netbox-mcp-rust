@@ -25,6 +25,7 @@ pub enum ErrorType {
     UserCancelled,
     ConfirmationRequired,
     InternalError,
+    TestModeEgressBlocked,
 }
 
 impl ErrorType {
@@ -50,6 +51,7 @@ impl ErrorType {
             UserCancelled => "user_cancelled",
             ConfirmationRequired => "confirmation_required",
             InternalError => "internal_error",
+            TestModeEgressBlocked => "TEST_MODE_EGRESS_BLOCKED",
         }
     }
 }
