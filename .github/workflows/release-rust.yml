@@ -24,7 +24,13 @@ concurrency:
   group: release-rust-${{ github.ref }}
 
 jobs:
+  # Porte de tests : pas de release sans cargo fmt/clippy/test verts (ci-rust.yml).
+  tests:
+    name: Tests Rust
+    uses: ./.github/workflows/ci-rust.yml
+
   prepare:
+    needs: tests
     name: Resolve version
     runs-on: ubuntu-latest
     outputs:

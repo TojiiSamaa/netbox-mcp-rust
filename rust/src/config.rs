@@ -59,9 +59,12 @@ pub fn merge_dotenv(env: &mut Env, text: &str) {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let Some((k, v)) = line.split_once('=') else { continue };
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
         let v = v.trim().trim_matches(|c| c == '"' || c == '\'');
-        env.entry(k.trim().trim_start_matches("export ").to_string()).or_insert_with(|| v.to_string());
+        env.entry(k.trim().trim_start_matches("export ").to_string())
+            .or_insert_with(|| v.to_string());
     }
 }
 
@@ -71,34 +74,53 @@ fn flag(env: &Env, key: &str, default: bool) -> Result<bool> {
         Some(v) if v.is_empty() => Ok(default),
         Some(v) if ["1", "true", "yes", "on"].contains(&v.as_str()) => Ok(true),
         Some(v) if ["0", "false", "no", "off"].contains(&v.as_str()) => Ok(false),
-        Some(v) => Err(NbError::new(ErrorType::ConfigError, format!("{key}: \"{v}\" is not a boolean (true/false)."))),
+        Some(v) => Err(NbError::new(
+            ErrorType::ConfigError,
+            format!("{key}: \"{v}\" is not a boolean (true/false)."),
+        )),
     }
 }
 
 fn number<T: std::str::FromStr>(env: &Env, key: &str, default: T) -> Result<T> {
     match env.get(key).map(|v| v.trim()).filter(|v| !v.is_empty()) {
         None => Ok(default),
-        Some(v) => v.parse().map_err(|_| NbError::new(ErrorType::ConfigError, format!("{key}: \"{v}\" is not a valid number."))),
+        Some(v) => v.parse().map_err(|_| {
+            NbError::new(
+                ErrorType::ConfigError,
+                format!("{key}: \"{v}\" is not a valid number."),
+            )
+        }),
     }
 }
 
 fn list(env: &Env, key: &str) -> Vec<String> {
     env.get(key)
-        .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 fn text(env: &Env, key: &str) -> Option<String> {
-    env.get(key).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    env.get(key)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 pub fn load_config(env: &Env) -> Result<Config> {
     let passthrough = flag(env, "NETBOX_TOKEN_PASSTHROUGH", false)?;
     let netbox_url = text(env, "NETBOX_URL").ok_or_else(|| {
-        NbError::new(ErrorType::ConfigError, "NETBOX_URL is not set.").hint("Example: NETBOX_URL=https://netbox.example.com/")
+        NbError::new(ErrorType::ConfigError, "NETBOX_URL is not set.")
+            .hint("Example: NETBOX_URL=https://netbox.example.com/")
     })?;
     if !(netbox_url.starts_with("http://") || netbox_url.starts_with("https://")) {
-        return Err(NbError::new(ErrorType::ConfigError, format!("NETBOX_URL: \"{netbox_url}\" must start with http:// or https://.")));
+        return Err(NbError::new(
+            ErrorType::ConfigError,
+            format!("NETBOX_URL: \"{netbox_url}\" must start with http:// or https://."),
+        ));
     }
     let token = text(env, "NETBOX_TOKEN");
     if token.is_none() && !passthrough {
@@ -120,11 +142,19 @@ pub fn load_config(env: &Env) -> Result<Config> {
         dry_run: flag(env, "NETBOX_DRY_RUN", false)?,
         confirm_arg: flag(env, "NETBOX_CONFIRM_ARG", false)?,
         approval_dir: text(env, "NETBOX_APPROVAL_DIR").map(Into::into),
-        elicit: match text(env, "NETBOX_ELICIT").map(|v| v.to_ascii_lowercase()).as_deref() {
+        elicit: match text(env, "NETBOX_ELICIT")
+            .map(|v| v.to_ascii_lowercase())
+            .as_deref()
+        {
             None | Some("true") | Some("destructive") => Elicit::Destructive,
             Some("false") | Some("off") | Some("0") => Elicit::Off,
             Some("all") => Elicit::All,
-            Some(v) => return Err(NbError::new(ErrorType::ConfigError, format!("NETBOX_ELICIT: \"{v}\" is not valid (off, destructive, all)."))),
+            Some(v) => {
+                return Err(NbError::new(
+                    ErrorType::ConfigError,
+                    format!("NETBOX_ELICIT: \"{v}\" is not valid (off, destructive, all)."),
+                ))
+            }
         },
         write_allow,
         write_deny: list(env, "NETBOX_WRITE_DENY"),
@@ -139,7 +169,9 @@ pub fn load_config(env: &Env) -> Result<Config> {
         mcp_token: text(env, "NETBOX_MCP_TOKEN").or_else(|| text(env, "MCP_AUTH_TOKEN")),
         cors_origins: list(env, "CORS_ORIGINS"),
         allowed_hosts: list(env, "NETBOX_MCP_ALLOWED_HOSTS"),
-        log_level: text(env, "LOG_LEVEL").unwrap_or_else(|| "INFO".into()).to_ascii_uppercase(),
+        log_level: text(env, "LOG_LEVEL")
+            .unwrap_or_else(|| "INFO".into())
+            .to_ascii_uppercase(),
     })
 }
 
@@ -148,7 +180,10 @@ mod tests {
     use super::*;
 
     fn env(pairs: &[(&str, &str)]) -> Env {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -162,14 +197,23 @@ mod tests {
 
     #[test]
     fn passthrough_needs_no_token() {
-        let c = load_config(&env(&[("NETBOX_URL", "http://n"), ("NETBOX_TOKEN_PASSTHROUGH", "true")])).unwrap();
+        let c = load_config(&env(&[
+            ("NETBOX_URL", "http://n"),
+            ("NETBOX_TOKEN_PASSTHROUGH", "true"),
+        ]))
+        .unwrap();
         assert!(c.passthrough && c.token.is_none());
     }
 
     #[test]
     fn bad_values_are_refused() {
         assert!(load_config(&env(&[("NETBOX_URL", "n"), ("NETBOX_TOKEN", "t")])).is_err());
-        assert!(load_config(&env(&[("NETBOX_URL", "http://n"), ("NETBOX_TOKEN", "t"), ("NETBOX_ALLOW_WRITES", "maybe")])).is_err());
+        assert!(load_config(&env(&[
+            ("NETBOX_URL", "http://n"),
+            ("NETBOX_TOKEN", "t"),
+            ("NETBOX_ALLOW_WRITES", "maybe")
+        ]))
+        .is_err());
     }
 
     #[test]

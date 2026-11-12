@@ -7,8 +7,12 @@ use serde_json::{json, Map, Value};
 /// Suit les `$ref` (`#/components/schemas/X`) d'un schéma, quelques sauts au plus.
 fn resolve<'a>(root: &'a Value, mut v: &'a Value) -> &'a Value {
     for _ in 0..6 {
-        let Some(r) = v.get("$ref").and_then(Value::as_str) else { break };
-        let Some(target) = r.strip_prefix('#').and_then(|p| root.pointer(p)) else { break };
+        let Some(r) = v.get("$ref").and_then(Value::as_str) else {
+            break;
+        };
+        let Some(target) = r.strip_prefix('#').and_then(|p| root.pointer(p)) else {
+            break;
+        };
         v = target;
     }
     v
@@ -22,13 +26,23 @@ fn short_type(root: &Value, prop: &Value) -> (String, Option<Value>, bool) {
         .find_map(|k| r.get(*k).and_then(Value::as_array).and_then(|a| a.first()))
         .map(|m| resolve(root, m))
         .unwrap_or(r);
-    let nullable = prop.get("nullable").and_then(Value::as_bool).unwrap_or(false) || r.get("nullable").and_then(Value::as_bool).unwrap_or(false);
+    let nullable = prop
+        .get("nullable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || r.get("nullable").and_then(Value::as_bool).unwrap_or(false);
     let ty = match r.get("type").and_then(Value::as_str) {
         Some("array") => {
-            let inner = r.get("items").map(|i| short_type(root, i).0).unwrap_or_else(|| "any".into());
+            let inner = r
+                .get("items")
+                .map(|i| short_type(root, i).0)
+                .unwrap_or_else(|| "any".into());
             format!("array<{inner}>")
         }
-        Some("object") if r.get("properties").is_some() => "object (id, or a nested object with a unique lookup such as {\"name\": ...})".to_string(),
+        Some("object") if r.get("properties").is_some() => {
+            "object (id, or a nested object with a unique lookup such as {\"name\": ...})"
+                .to_string()
+        }
         Some(t) => match r.get("format").and_then(Value::as_str) {
             Some(f) => format!("{t} ({f})"),
             None => t.to_string(),
@@ -63,7 +77,9 @@ fn api_tail(path: &str) -> &str {
 /// Description d'un endpoint de liste (`dcim/devices`) : champs écrivables, filtres, actions.
 pub fn describe(schema: &Value, endpoint: &str) -> Option<Value> {
     let paths = schema.get("paths")?.as_object()?;
-    let list_key = paths.keys().find(|k| api_tail(k).trim_matches('/') == endpoint)?;
+    let list_key = paths
+        .keys()
+        .find(|k| api_tail(k).trim_matches('/') == endpoint)?;
     let list = &paths[list_key];
     let detail_prefix = format!("{}{{", api_tail(list_key));
 
@@ -72,7 +88,10 @@ pub fn describe(schema: &Value, endpoint: &str) -> Option<Value> {
     let post = list.pointer("/post/requestBody/content/application~1json/schema");
     let patch = paths
         .iter()
-        .find(|(k, _)| api_tail(k).starts_with(&detail_prefix) && api_tail(k).matches('/').count() == api_tail(list_key).matches('/').count() + 1)
+        .find(|(k, _)| {
+            api_tail(k).starts_with(&detail_prefix)
+                && api_tail(k).matches('/').count() == api_tail(list_key).matches('/').count() + 1
+        })
         .and_then(|(_, d)| d.pointer("/patch/requestBody/content/application~1json/schema"));
     let objs = [post, patch]
         .into_iter()
@@ -84,10 +103,22 @@ pub fn describe(schema: &Value, endpoint: &str) -> Option<Value> {
         })
         .find(|f| !f.is_empty())
         .unwrap_or_default();
-    let required: Vec<&str> = objs.iter().flat_map(|o| o.get("required").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str)).collect();
+    let required: Vec<&str> = objs
+        .iter()
+        .flat_map(|o| {
+            o.get("required")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+        })
+        .collect();
     let mut fields = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for props in objs.iter().filter_map(|o| o.get("properties").and_then(Value::as_object)) {
+    for props in objs
+        .iter()
+        .filter_map(|o| o.get("properties").and_then(Value::as_object))
+    {
         for (name, p) in props {
             if !seen.insert(name.as_str()) {
                 continue;
@@ -107,8 +138,16 @@ pub fn describe(schema: &Value, endpoint: &str) -> Option<Value> {
             if let Some(c) = choices {
                 f.insert("choices".into(), c);
             }
-            if let Some(d) = p.get("description").or_else(|| rp.get("description")).and_then(Value::as_str).filter(|d| !d.is_empty()) {
-                f.insert("description".into(), json!(d.chars().take(160).collect::<String>()));
+            if let Some(d) = p
+                .get("description")
+                .or_else(|| rp.get("description"))
+                .and_then(Value::as_str)
+                .filter(|d| !d.is_empty())
+            {
+                f.insert(
+                    "description".into(),
+                    json!(d.chars().take(160).collect::<String>()),
+                );
             }
             fields.push(Value::Object(f));
         }
@@ -117,7 +156,12 @@ pub fn describe(schema: &Value, endpoint: &str) -> Option<Value> {
     let filters: Vec<&str> = list
         .pointer("/get/parameters")
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter(|p| p.get("in").and_then(Value::as_str) == Some("query")).filter_map(|p| p.get("name").and_then(Value::as_str)).collect())
+        .map(|a| {
+            a.iter()
+                .filter(|p| p.get("in").and_then(Value::as_str) == Some("query"))
+                .filter_map(|p| p.get("name").and_then(Value::as_str))
+                .collect()
+        })
         .unwrap_or_default();
 
     let mut actions = Vec::new();
@@ -128,9 +172,20 @@ pub fn describe(schema: &Value, endpoint: &str) -> Option<Value> {
         if !t.starts_with(&prefix) || t.matches('/').count() <= depth + 1 {
             continue; // le détail `{id}/` lui-même n'est pas une action
         }
-        let methods: Vec<String> = v.as_object().into_iter().flatten().filter(|(m, _)| ["get", "post", "put", "patch", "delete"].contains(&m.as_str())).map(|(m, _)| m.to_ascii_uppercase()).collect();
-        let summary = v.as_object().into_iter().flatten().find_map(|(_, op)| op.get("summary").and_then(Value::as_str));
-        actions.push(json!({ "path": t.trim_matches('/'), "methods": methods, "summary": summary }));
+        let methods: Vec<String> = v
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(m, _)| ["get", "post", "put", "patch", "delete"].contains(&m.as_str()))
+            .map(|(m, _)| m.to_ascii_uppercase())
+            .collect();
+        let summary = v
+            .as_object()
+            .into_iter()
+            .flatten()
+            .find_map(|(_, op)| op.get("summary").and_then(Value::as_str));
+        actions
+            .push(json!({ "path": t.trim_matches('/'), "methods": methods, "summary": summary }));
     }
 
     Some(json!({
@@ -145,7 +200,9 @@ pub fn describe(schema: &Value, endpoint: &str) -> Option<Value> {
 
 /// Les endpoints de liste du schéma qui ne sont pas dans le registre : plugins sans ContentType, etc.
 pub fn list_endpoints(schema: &Value) -> Vec<String> {
-    let Some(paths) = schema.get("paths").and_then(Value::as_object) else { return vec![] };
+    let Some(paths) = schema.get("paths").and_then(Value::as_object) else {
+        return vec![];
+    };
     paths
         .iter()
         .filter(|(k, v)| v.get("get").is_some() && !api_tail(k).contains('{'))
@@ -206,7 +263,12 @@ mod tests {
               "properties": { "name": {"type": "string"}, "slug": {"type": "string"} } } } }
         });
         let d = describe(&s, "dcim/sites").unwrap();
-        let names: Vec<&str> = d["fields"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+        let names: Vec<&str> = d["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["name"].as_str().unwrap())
+            .collect();
         assert_eq!(names, ["name", "slug"]);
         assert_eq!(d["fields"][1]["required"], true);
     }

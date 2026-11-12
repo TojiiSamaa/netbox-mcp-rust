@@ -3,7 +3,14 @@
 
 use serde_json::Value;
 
-const SECRET_KEYS: [&str; 6] = ["preshared_key", "auth_psk", "psk", "password", "secret", "auth_secret"];
+const SECRET_KEYS: [&str; 6] = [
+    "preshared_key",
+    "auth_psk",
+    "psk",
+    "password",
+    "secret",
+    "auth_secret",
+];
 /// Dans les objets `users.token` seulement : `key` y est le jeton lui-même.
 const TOKEN_KEYS: [&str; 2] = ["key", "token"];
 
@@ -13,7 +20,8 @@ pub fn redact(value: &mut Value, tokens: bool) {
     match value {
         Value::Object(map) => {
             for (k, v) in map.iter_mut() {
-                let secret = SECRET_KEYS.contains(&k.as_str()) || (tokens && TOKEN_KEYS.contains(&k.as_str()));
+                let secret = SECRET_KEYS.contains(&k.as_str())
+                    || (tokens && TOKEN_KEYS.contains(&k.as_str()));
                 if secret && matches!(v, Value::String(s) if !s.is_empty()) {
                     *v = Value::String(MASK.into());
                 } else {

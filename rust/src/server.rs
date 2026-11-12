@@ -46,7 +46,11 @@ impl Registry {
             .map(Arc::new)
             .collect();
         let list = json!({ "tools": tools.iter().map(|d| tool_json(d, cfg)).collect::<Vec<_>>() });
-        Arc::new(Registry { runtime, tools, list })
+        Arc::new(Registry {
+            runtime,
+            tools,
+            list,
+        })
     }
 }
 
@@ -62,11 +66,19 @@ fn confirmation_needed(cfg: &crate::config::Config, def: &ToolDef) -> bool {
 fn tool_json(def: &ToolDef, cfg: &crate::config::Config) -> Value {
     let mut input = def.input.clone();
     if def.access != Access::Read {
-        input.push(schema::boolean("dry_run").opt().desc("Show what would be sent without sending anything."));
+        input.push(
+            schema::boolean("dry_run")
+                .opt()
+                .desc("Show what would be sent without sending anything."),
+        );
         // Le schéma publié est fermé (`additionalProperties: false`) : sans `confirm` ici, un client qui valide
         // ses arguments ne pourrait jamais envoyer la confirmation que le refus lui demande.
         if cfg.confirm_arg && cfg.approval_dir.is_none() && confirmation_needed(cfg, def) {
-            input.push(schema::boolean("confirm").opt().desc("Send true only after the user has explicitly agreed to this exact action."));
+            input.push(
+                schema::boolean("confirm").opt().desc(
+                    "Send true only after the user has explicitly agreed to this exact action.",
+                ),
+            );
         }
     }
     json!({
@@ -91,7 +103,11 @@ pub fn render_result(value: &Value, max_chars: usize, offset: usize) -> String {
     if len <= max_chars {
         return text;
     }
-    if let Some(rows) = value.get("results").and_then(Value::as_array).filter(|r| r.len() > 1) {
+    if let Some(rows) = value
+        .get("results")
+        .and_then(Value::as_array)
+        .filter(|r| r.len() > 1)
+    {
         let mut keep = rows.len() * max_chars / len;
         while keep > 0 {
             let mut candidate = value.clone();
@@ -134,12 +150,23 @@ pub struct Session {
 
 impl Session {
     pub fn new(registry: Arc<Registry>, out: Option<Outbound>, token: Option<String>) -> Arc<Self> {
-        Arc::new(Session { registry, out, token, elicitation: AtomicBool::new(false), next_id: AtomicI64::new(1), pending: Mutex::new(HashMap::new()) })
+        Arc::new(Session {
+            registry,
+            out,
+            token,
+            elicitation: AtomicBool::new(false),
+            next_id: AtomicI64::new(1),
+            pending: Mutex::new(HashMap::new()),
+        })
     }
 
     /// Réponse du client à une requête du serveur (elicitation).
     pub fn deliver_response(&self, msg: Value) {
-        if let Some(tx) = msg.get("id").and_then(Value::as_i64).and_then(|id| self.pending.lock().unwrap().remove(&id)) {
+        if let Some(tx) = msg
+            .get("id")
+            .and_then(Value::as_i64)
+            .and_then(|id| self.pending.lock().unwrap().remove(&id))
+        {
             let _ = tx.send(msg);
         }
     }
@@ -151,16 +178,32 @@ impl Session {
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
         Some(match self.dispatch(&method, &params).await {
             Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-            Err((code, message)) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }),
+            Err((code, message)) => {
+                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+            }
         })
     }
 
-    async fn dispatch(self: &Arc<Self>, method: &str, params: &Value) -> std::result::Result<Value, (i64, String)> {
+    async fn dispatch(
+        self: &Arc<Self>,
+        method: &str,
+        params: &Value,
+    ) -> std::result::Result<Value, (i64, String)> {
         match method {
             "initialize" => {
-                let wanted = params.get("protocolVersion").and_then(Value::as_str).unwrap_or("");
-                let version = if SUPPORTED_PROTOCOLS.contains(&wanted) { wanted } else { SUPPORTED_PROTOCOLS[0] };
-                self.elicitation.store(params.pointer("/capabilities/elicitation").is_some(), Ordering::Relaxed);
+                let wanted = params
+                    .get("protocolVersion")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let version = if SUPPORTED_PROTOCOLS.contains(&wanted) {
+                    wanted
+                } else {
+                    SUPPORTED_PROTOCOLS[0]
+                };
+                self.elicitation.store(
+                    params.pointer("/capabilities/elicitation").is_some(),
+                    Ordering::Relaxed,
+                );
                 Ok(json!({
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
@@ -175,7 +218,15 @@ impl Session {
                 let Some(def) = self.registry.tools.iter().find(|t| t.name == name).cloned() else {
                     return Err((-32602, format!("Unknown tool: {name}")));
                 };
-                Ok(self.invoke(&def, params.get("arguments").cloned().unwrap_or_else(|| json!({}))).await)
+                Ok(self
+                    .invoke(
+                        &def,
+                        params
+                            .get("arguments")
+                            .cloned()
+                            .unwrap_or_else(|| json!({})),
+                    )
+                    .await)
             }
             other => Err((-32601, format!("Method not found: {other}"))),
         }
@@ -187,7 +238,12 @@ impl Session {
 
     /// Demande confirmation à un humain. Échoue fermé : si une confirmation est requise et que personne
     /// ne peut la donner (HTTP sans session, client sans elicitation), l'action est refusée.
-    async fn confirm_with_human(&self, def: &ToolDef, args: &Args, confirm_arg: bool) -> Result<()> {
+    async fn confirm_with_human(
+        &self,
+        def: &ToolDef,
+        args: &Args,
+        confirm_arg: bool,
+    ) -> Result<()> {
         if !self.needs_confirmation(def) {
             return Ok(());
         }
@@ -204,7 +260,11 @@ impl Session {
         if !can_ask {
             // Approbation hors bande : `confirm: true` est ignoré, seul l'opérateur peut approuver (voir `approval`).
             if let Some(dir) = &cfg.approval_dir {
-                let message = def.confirmation.as_ref().map(|c| c(args)).unwrap_or_else(|| format!("{} {}", def.name, args.to_value()));
+                let message = def
+                    .confirmation
+                    .as_ref()
+                    .map(|c| c(args))
+                    .unwrap_or_else(|| format!("{} {}", def.name, args.to_value()));
                 return match crate::approval::check(dir, def.name, &args.to_value(), &message) {
                     Ok(crate::approval::Verdict::Approved) => Ok(()),
                     Ok(crate::approval::Verdict::Pending(code)) => Err(NbError::new(ErrorType::ConfirmationRequired, format!("{} needs the operator's approval. Nothing was done. Approval code: {code}.", def.name)).hint(format!(
@@ -213,9 +273,15 @@ impl Session {
                     Err(e) => Err(NbError::new(ErrorType::ConfirmationRequired, format!("{} needs the operator's approval, and the approval directory is unusable: {e}. Nothing was done.", def.name))),
                 };
             }
-            return if cfg.confirm_arg && confirm_arg { Ok(()) } else { Err(refused()) };
+            return if cfg.confirm_arg && confirm_arg {
+                Ok(())
+            } else {
+                Err(refused())
+            };
         }
-        let (Some(confirmation), Some(out)) = (&def.confirmation, &self.out) else { return Err(refused()) };
+        let (Some(confirmation), Some(out)) = (&def.confirmation, &self.out) else {
+            return Err(refused());
+        };
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, tx);
@@ -226,18 +292,33 @@ impl Session {
                 "requestedSchema": { "type": "object", "properties": { "confirm": { "type": "boolean", "title": "Confirm", "description": "Go ahead with this action." } }, "required": ["confirm"] },
             },
         });
-        let cancelled = |why: String| NbError::new(ErrorType::UserCancelled, format!("Could not get a confirmation from the user: {why}. Nothing was done."));
+        let cancelled = |why: String| {
+            NbError::new(
+                ErrorType::UserCancelled,
+                format!("Could not get a confirmation from the user: {why}. Nothing was done."),
+            )
+        };
         if out.send(request).is_err() {
             return Err(cancelled("the connection is closed".into()));
         }
         let answer = rx.await.map_err(|_| cancelled("no answer".into()))?;
         if let Some(e) = answer.get("error") {
-            return Err(cancelled(e.get("message").and_then(Value::as_str).unwrap_or("error").to_string()));
+            return Err(cancelled(
+                e.get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("error")
+                    .to_string(),
+            ));
         }
         let result = answer.get("result").cloned().unwrap_or(Value::Null);
-        let accepted = result.get("action").and_then(Value::as_str) == Some("accept") && result.pointer("/content/confirm") == Some(&Value::Bool(true));
+        let accepted = result.get("action").and_then(Value::as_str) == Some("accept")
+            && result.pointer("/content/confirm") == Some(&Value::Bool(true));
         if !accepted {
-            return Err(NbError::new(ErrorType::UserCancelled, "The user did not confirm this action, so nothing was done.").hint("Do not retry unless the user asks for it."));
+            return Err(NbError::new(
+                ErrorType::UserCancelled,
+                "The user did not confirm this action, so nothing was done.",
+            )
+            .hint("Do not retry unless the user asks for it."));
         }
         Ok(())
     }
@@ -301,22 +382,43 @@ impl Session {
         .await;
 
         match outcome {
-            Ok(result) => json!({ "content": [{ "type": "text", "text": render_result(&result, rt.cfg.max_response_chars, offset) }] }),
+            Ok(result) => {
+                json!({ "content": [{ "type": "text", "text": render_result(&result, rt.cfg.max_response_chars, offset) }] })
+            }
             // Lire un objet qui n'existe pas est une réponse (`found: false`), pas une panne : une erreur d'outil
             // ferait compter ces 404 par le disjoncteur de certains clients, qui couperait alors aussi les appels valides.
-            Err(err) if def.access == Access::Read && err.is(ErrorType::NotFound) && err.details.is_some() => {
+            Err(err)
+                if def.access == Access::Read
+                    && err.is(ErrorType::NotFound)
+                    && err.details.is_some() =>
+            {
                 json!({ "content": [{ "type": "text", "text": json!({ "found": false, "error": err.to_json() }).to_string() }] })
             }
             Err(err) => {
                 if def.access != Access::Read {
-                    self.audit(def, &audit_args, dry_run, ctx_slot.as_deref(), started, Some(err.kind.as_str()));
+                    self.audit(
+                        def,
+                        &audit_args,
+                        dry_run,
+                        ctx_slot.as_deref(),
+                        started,
+                        Some(err.kind.as_str()),
+                    );
                 }
                 error_result(&err)
             }
         }
     }
 
-    fn audit(&self, def: &ToolDef, args: &Value, dry_run: bool, ctx: Option<&Ctx>, started: std::time::Instant, error: Option<&str>) {
+    fn audit(
+        &self,
+        def: &ToolDef,
+        args: &Value,
+        dry_run: bool,
+        ctx: Option<&Ctx>,
+        started: std::time::Instant,
+        error: Option<&str>,
+    ) {
         let mut entry = Map::new();
         entry.insert("tool".into(), json!(def.name));
         entry.insert("access".into(), json!(def.access.as_str()));
@@ -324,13 +426,21 @@ impl Session {
             entry.insert("dry_run".into(), json!(true));
         }
         entry.insert("args".into(), args.clone());
-        entry.insert("outcome".into(), json!(if error.is_some() { "error" } else { "ok" }));
+        entry.insert(
+            "outcome".into(),
+            json!(if error.is_some() { "error" } else { "ok" }),
+        );
         if let Some(e) = error {
             entry.insert("error_type".into(), json!(e));
         }
-        let writes = ctx.map(|c| c.writes.lock().unwrap().clone()).unwrap_or_default();
+        let writes = ctx
+            .map(|c| c.writes.lock().unwrap().clone())
+            .unwrap_or_default();
         entry.insert("writes".into(), Value::Array(writes));
-        entry.insert("duration_ms".into(), json!(started.elapsed().as_millis() as u64));
+        entry.insert(
+            "duration_ms".into(),
+            json!(started.elapsed().as_millis() as u64),
+        );
         self.registry.runtime.audit(Value::Object(entry));
     }
 }
@@ -341,13 +451,18 @@ mod tests {
 
     #[test]
     fn render_cuts_rows_not_text() {
-        let rows: Vec<Value> = (0..200).map(|i| json!({ "n": i, "pad": "xxxxxxxxxxxxxxxxxxxx" })).collect();
+        let rows: Vec<Value> = (0..200)
+            .map(|i| json!({ "n": i, "pad": "xxxxxxxxxxxxxxxxxxxx" }))
+            .collect();
         let v = json!({ "count": 200, "results": rows });
         let s = render_result(&v, 2000, 10);
         let parsed: Value = serde_json::from_str(&s).unwrap();
         assert!(s.chars().count() <= 2000);
         assert_eq!(parsed["has_more"], true);
-        assert_eq!(parsed["next_offset"], 10 + parsed["results"].as_array().unwrap().len());
+        assert_eq!(
+            parsed["next_offset"],
+            10 + parsed["results"].as_array().unwrap().len()
+        );
     }
 
     #[test]
@@ -358,7 +473,12 @@ mod tests {
 
     #[test]
     fn render_falls_back_to_preview() {
-        let parsed: Value = serde_json::from_str(&render_result(&json!({ "blob": "y".repeat(5000) }), 1000, 0)).unwrap();
+        let parsed: Value = serde_json::from_str(&render_result(
+            &json!({ "blob": "y".repeat(5000) }),
+            1000,
+            0,
+        ))
+        .unwrap();
         assert_eq!(parsed["truncated"], true);
     }
 }

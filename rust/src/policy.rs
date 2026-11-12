@@ -27,7 +27,11 @@ pub fn check_type_writable(cfg: &Config, key: &str) -> Result<()> {
         return Err(denied(key, "it is in NETBOX_WRITE_DENY"));
     }
     if !cfg.write_allow.iter().any(|p| pattern_matches(p, key)) {
-        let why = if key.starts_with("users.") { "user, token and permission objects need an explicit users.* entry in NETBOX_WRITE_TYPES" } else { "it is not in NETBOX_WRITE_TYPES" };
+        let why = if key.starts_with("users.") {
+            "user, token and permission objects need an explicit users.* entry in NETBOX_WRITE_TYPES"
+        } else {
+            "it is not in NETBOX_WRITE_TYPES"
+        };
         return Err(denied(key, why));
     }
     Ok(())
@@ -45,7 +49,11 @@ pub fn check_path_writable(cfg: &Config, types: &TypeRegistry, path: &str) -> Re
         return check_type_writable(cfg, &t.key);
     }
     let app = path.split('/').next().unwrap_or("");
-    if cfg.write_deny.iter().any(|p| pattern_matches(p, &format!("{app}.x"))) {
+    if cfg
+        .write_deny
+        .iter()
+        .any(|p| pattern_matches(p, &format!("{app}.x")))
+    {
         return Err(denied(path, "its application is in NETBOX_WRITE_DENY"));
     }
     if app == "users" && !cfg.write_allow.iter().any(|p| p == "users.*") {
@@ -54,7 +62,10 @@ pub fn check_path_writable(cfg: &Config, types: &TypeRegistry, path: &str) -> Re
     if cfg.write_allow.iter().any(|p| p == "*") {
         return Ok(());
     }
-    Err(denied(path, "this path is not a known object type and writes are limited to a list of types"))
+    Err(denied(
+        path,
+        "this path is not a known object type and writes are limited to a list of types",
+    ))
 }
 
 pub fn check_writes_on(cfg: &Config, is_delete: bool) -> Result<()> {
@@ -63,8 +74,11 @@ pub fn check_writes_on(cfg: &Config, is_delete: bool) -> Result<()> {
             .hint("Do not retry. The operator can enable writes with NETBOX_ALLOW_WRITES=true, or preview with NETBOX_DRY_RUN=true."));
     }
     if is_delete && !cfg.allow_delete && !cfg.dry_run {
-        return Err(NbError::new(ErrorType::DeleteDisabled, "Deletions are disabled: nothing was sent to NetBox.")
-            .hint("Do not retry. The operator can enable them with NETBOX_ALLOW_DELETE=true."));
+        return Err(NbError::new(
+            ErrorType::DeleteDisabled,
+            "Deletions are disabled: nothing was sent to NetBox.",
+        )
+        .hint("Do not retry. The operator can enable them with NETBOX_ALLOW_DELETE=true."));
     }
     Ok(())
 }
@@ -75,7 +89,10 @@ mod tests {
     use crate::config::{load_config, Env};
 
     fn cfg(extra: &[(&str, &str)]) -> Config {
-        let mut e: Env = [("NETBOX_URL", "http://n"), ("NETBOX_TOKEN", "t")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let mut e: Env = [("NETBOX_URL", "http://n"), ("NETBOX_TOKEN", "t")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
         e.extend(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())));
         load_config(&e).unwrap()
     }
@@ -85,12 +102,17 @@ mod tests {
         assert!(pattern_matches("*", "dcim.device"));
         assert!(!pattern_matches("*", "users.token"));
         assert!(pattern_matches("users.*", "users.token"));
-        assert!(pattern_matches("dcim.*", "dcim.device") && !pattern_matches("dcim.*", "ipam.vlan"));
+        assert!(
+            pattern_matches("dcim.*", "dcim.device") && !pattern_matches("dcim.*", "ipam.vlan")
+        );
     }
 
     #[test]
     fn allow_and_deny() {
-        let c = cfg(&[("NETBOX_WRITE_TYPES", "dcim.*,ipam.vlan"), ("NETBOX_WRITE_DENY", "dcim.cable")]);
+        let c = cfg(&[
+            ("NETBOX_WRITE_TYPES", "dcim.*,ipam.vlan"),
+            ("NETBOX_WRITE_DENY", "dcim.cable"),
+        ]);
         assert!(check_type_writable(&c, "dcim.device").is_ok());
         assert!(check_type_writable(&c, "ipam.vlan").is_ok());
         assert!(check_type_writable(&c, "dcim.cable").is_err());
@@ -115,7 +137,14 @@ mod tests {
         assert!(check_writes_on(&cfg(&[]), false).is_err());
         assert!(check_writes_on(&cfg(&[("NETBOX_ALLOW_WRITES", "true")]), false).is_ok());
         assert!(check_writes_on(&cfg(&[("NETBOX_ALLOW_WRITES", "true")]), true).is_err());
-        assert!(check_writes_on(&cfg(&[("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_ALLOW_DELETE", "true")]), true).is_ok());
+        assert!(check_writes_on(
+            &cfg(&[
+                ("NETBOX_ALLOW_WRITES", "true"),
+                ("NETBOX_ALLOW_DELETE", "true")
+            ]),
+            true
+        )
+        .is_ok());
         assert!(check_writes_on(&cfg(&[("NETBOX_DRY_RUN", "true")]), true).is_ok());
     }
 }

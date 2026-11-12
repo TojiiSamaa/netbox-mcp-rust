@@ -5,7 +5,8 @@ use crate::error::{ErrorType, NbError, Result};
 use serde_json::{Map, Value};
 
 const SUFFIXES: [&str; 16] = [
-    "n", "ic", "nic", "isw", "nisw", "iew", "niew", "ie", "nie", "empty", "regex", "iregex", "lt", "lte", "gt", "gte",
+    "n", "ic", "nic", "isw", "nisw", "iew", "niew", "ie", "nie", "empty", "regex", "iregex", "lt",
+    "lte", "gt", "gte",
 ];
 /// Paramètres que les outils règlent eux-mêmes ; un filtre du même nom serait écrasé sans le dire.
 const RESERVED: [&str; 5] = ["limit", "offset", "fields", "brief", "ordering"];
@@ -62,7 +63,11 @@ pub fn list_query(
     if brief {
         q.push(("brief".into(), "1".into()));
     }
-    let order: Vec<&str> = ordering.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let order: Vec<&str> = ordering
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
     if !order.is_empty() {
         q.push(("ordering".into(), order.join(",")));
     }
@@ -80,7 +85,10 @@ mod tests {
 
     #[test]
     fn accepts_plain_and_lookups() {
-        assert!(check(json!({"site_id": 1, "name__ic": "sw", "vid__gte": 100, "q": "x", "cf_owner__n": "a"})).is_ok());
+        assert!(check(
+            json!({"site_id": 1, "name__ic": "sw", "vid__gte": 100, "q": "x", "cf_owner__n": "a"})
+        )
+        .is_ok());
     }
 
     #[test]
@@ -100,8 +108,18 @@ mod tests {
     #[test]
     fn query_has_pagination_and_fields() {
         let f = json!({"site_id": [1, 2]});
-        let q = list_query(f.as_object().unwrap(), &["id".into(), "name".into()], true, 5, 10, &["-id".into(), " ".into()]);
-        assert!(q.contains(&("site_id".into(), "1".into())) && q.contains(&("site_id".into(), "2".into())));
+        let q = list_query(
+            f.as_object().unwrap(),
+            &["id".into(), "name".into()],
+            true,
+            5,
+            10,
+            &["-id".into(), " ".into()],
+        );
+        assert!(
+            q.contains(&("site_id".into(), "1".into()))
+                && q.contains(&("site_id".into(), "2".into()))
+        );
         assert!(q.contains(&("fields".into(), "id,name".into())));
         assert!(q.contains(&("brief".into(), "1".into())));
         assert!(q.contains(&("ordering".into(), "-id".into())));
