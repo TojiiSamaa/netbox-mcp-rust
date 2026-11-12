@@ -1,7 +1,8 @@
 //! Serveur MCP : JSON-RPC 2.0 indépendant du transport. Un `Registry` porte les outils ;
 //! une `Session` traite les messages d'une connexion (stdio : une seule ; HTTP : une par requête).
 
-use crate::config::Elicit;
+use crate::config::{Approver, Elicit};
+use crate::stats::Validation;
 use crate::error::{ErrorType, NbError, Result};
 use crate::policy::check_writes_on;
 use crate::runtime::Runtime;
@@ -115,10 +116,6 @@ pub fn render_result(value: &Value, max_chars: usize, offset: usize) -> String {
     .to_string()
 }
 
-fn error_result(err: &NbError) -> Value {
-    json!({ "isError": true, "content": [{ "type": "text", "text": err.to_json().to_string() }] })
-}
-
 /// Message sortant d'une session vers le client (réponse ou requête d'elicitation).
 pub type Outbound = mpsc::UnboundedSender<Value>;
 
@@ -192,6 +189,28 @@ impl Session {
             return Ok(());
         }
         let cfg = &self.registry.runtime.cfg;
+        let stats = &self.registry.runtime.stats;
+        // Mode test : l'approbateur simulé répond à la place de l'humain. Il n'existe que dans ce mode, où rien de réel ne part.
+        if let Some(approver) = cfg.approver {
+            return match approver {
+                Approver::Approve => {
+                    stats.validation(Validation::Approved);
+                    Ok(())
+                }
+                Approver::Deny => {
+                    stats.validation(Validation::Denied);
+                    Err(NbError::new(ErrorType::UserCancelled, "[TEST] The simulated approver denied this action, so nothing was done.").hint("Set MCP_TEST_APPROVER=approve at startup to test the approved path."))
+                }
+                Approver::Timeout => {
+                    stats.validation(Validation::TimedOut);
+                    Err(NbError::new(ErrorType::Timeout, "[TEST] The simulated approver did not answer in time, so nothing was done."))
+                }
+                Approver::Absent => {
+                    stats.validation(Validation::Unavailable);
+                    Err(NbError::new(ErrorType::ConfirmationRequired, format!("{} needs a human confirmation, and this client cannot give one (no elicitation support). Nothing was done.", def.name)))
+                }
+            };
+        }
         let refused = || {
             let hint = if cfg.confirm_arg {
                 "Ask the user to confirm this exact action, then repeat the call with confirm: true. Never set it without their answer."
@@ -206,16 +225,34 @@ impl Session {
             if let Some(dir) = &cfg.approval_dir {
                 let message = def.confirmation.as_ref().map(|c| c(args)).unwrap_or_else(|| format!("{} {}", def.name, args.to_value()));
                 return match crate::approval::check(dir, def.name, &args.to_value(), &message) {
-                    Ok(crate::approval::Verdict::Approved) => Ok(()),
-                    Ok(crate::approval::Verdict::Pending(code)) => Err(NbError::new(ErrorType::ConfirmationRequired, format!("{} needs the operator's approval. Nothing was done. Approval code: {code}.", def.name)).hint(format!(
-                        "Tell the operator to run `nbmcp approve {code}` in their own terminal, where they will see this exact action, then repeat the same call (valid 10 minutes, works once). You cannot approve it yourself; `confirm: true` is ignored."
-                    ))),
-                    Err(e) => Err(NbError::new(ErrorType::ConfirmationRequired, format!("{} needs the operator's approval, and the approval directory is unusable: {e}. Nothing was done.", def.name))),
+                    Ok(crate::approval::Verdict::Approved) => {
+                        stats.validation(Validation::Approved);
+                        Ok(())
+                    }
+                    Ok(crate::approval::Verdict::Pending(code)) => {
+                        stats.validation(Validation::Unavailable);
+                        Err(NbError::new(ErrorType::ConfirmationRequired, format!("{} needs the operator's approval. Nothing was done. Approval code: {code}.", def.name)).hint(format!(
+                            "Tell the operator to run `nbmcp approve {code}` in their own terminal, where they will see this exact action, then repeat the same call (valid 10 minutes, works once). You cannot approve it yourself; `confirm: true` is ignored."
+                        )))
+                    }
+                    Err(e) => {
+                        stats.validation(Validation::Unavailable);
+                        Err(NbError::new(ErrorType::ConfirmationRequired, format!("{} needs the operator's approval, and the approval directory is unusable: {e}. Nothing was done.", def.name)))
+                    }
                 };
             }
-            return if cfg.confirm_arg && confirm_arg { Ok(()) } else { Err(refused()) };
+            return if cfg.confirm_arg && confirm_arg {
+                stats.validation(Validation::Approved);
+                Ok(())
+            } else {
+                stats.validation(Validation::Unavailable);
+                Err(refused())
+            };
         }
-        let (Some(confirmation), Some(out)) = (&def.confirmation, &self.out) else { return Err(refused()) };
+        let (Some(confirmation), Some(out)) = (&def.confirmation, &self.out) else {
+            stats.validation(Validation::Unavailable);
+            return Err(refused());
+        };
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, tx);
@@ -237,8 +274,10 @@ impl Session {
         let result = answer.get("result").cloned().unwrap_or(Value::Null);
         let accepted = result.get("action").and_then(Value::as_str) == Some("accept") && result.pointer("/content/confirm") == Some(&Value::Bool(true));
         if !accepted {
+            stats.validation(Validation::Denied);
             return Err(NbError::new(ErrorType::UserCancelled, "The user did not confirm this action, so nothing was done.").hint("Do not retry unless the user asks for it."));
         }
+        stats.validation(Validation::Approved);
         Ok(())
     }
 
@@ -296,10 +335,18 @@ impl Session {
             if is_write {
                 self.audit(def, &audit_args, dry_run, ctx_slot.as_deref(), started, None);
             }
+            if rt.cfg.test_mode {
+                result.insert("test_mode".into(), json!(true));
+                result.insert("test_notice".into(), json!("[TEST] Simulated answer from fixtures. Nothing real was read or sent."));
+            }
             Ok(Value::Object(result))
         }
         .await;
 
+        rt.stats.record(def.name, rt.cfg.test_mode, outcome.is_ok(), started.elapsed().as_millis() as u64);
+        if let Some(path) = &rt.cfg.stats_file {
+            rt.stats.export(path);
+        }
         match outcome {
             Ok(result) => json!({ "content": [{ "type": "text", "text": render_result(&result, rt.cfg.max_response_chars, offset) }] }),
             // Lire un objet qui n'existe pas est une réponse (`found: false`), pas une panne : une erreur d'outil
@@ -311,7 +358,12 @@ impl Session {
                 if def.access != Access::Read {
                     self.audit(def, &audit_args, dry_run, ctx_slot.as_deref(), started, Some(err.kind.as_str()));
                 }
-                error_result(&err)
+                let mut shown = err.to_json();
+                if rt.cfg.test_mode {
+                    shown["test_mode"] = json!(true);
+                    shown["test_notice"] = json!("[TEST] Simulated run; the error is real logic, nothing real was sent.");
+                }
+                json!({ "isError": true, "content": [{ "type": "text", "text": shown.to_string() }] })
             }
         }
     }

@@ -405,3 +405,36 @@ async fn an_operator_approval_lets_exactly_that_call_through_once() {
     assert_eq!(sent(&log, "DELETE").len(), 1);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+const WRITE_TOOLS: [&str; 10] = [
+    "netbox_create_object", "netbox_bulk_create", "netbox_update_object", "netbox_bulk_update", "netbox_allocate",
+    "netbox_api_write", "netbox_delete_object", "netbox_bulk_delete", "netbox_run_script", "netbox_api_delete",
+];
+
+fn fixture_call(name: &str) -> Value {
+    let all: Value = serde_json::from_str(include_str!("../test/fixtures/calls.json")).unwrap();
+    all[name].clone()
+}
+
+/// Non-regression issue #4 (OverStyleFR; doublon #1, corrigé par 12221e9) : sans moyen de confirmer
+/// (client sans elicitation), NETBOX_ELICIT=all doit refuser CHAQUE écriture, rien ne part vers NetBox.
+#[tokio::test]
+async fn issue_4_no_elicitation_client_never_writes_when_elicit_is_all() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_ALLOW_DELETE", "true"), ("NETBOX_ELICIT", "all")]).await;
+    for name in WRITE_TOOLS {
+        let (err, v) = call(&s, name, fixture_call(name)).await;
+        assert!(err && v.to_string().contains("confirmation_required"), "{name}: {v}");
+    }
+    for m in ["POST", "PUT", "PATCH", "DELETE"] {
+        assert!(sent(&log, m).is_empty(), "{m} reached NetBox");
+    }
+}
+
+/// L'approbateur simulé n'existe qu'en mode test : hors mode test, MCP_TEST_APPROVER=approve ne change rien.
+#[tokio::test]
+async fn simulated_approver_has_no_effect_outside_test_mode() {
+    let (s, log) = start(&[("ENABLE_PLUGIN_DISCOVERY", "false"), ("NETBOX_ALLOW_WRITES", "true"), ("NETBOX_ALLOW_DELETE", "true"), ("MCP_TEST_APPROVER", "approve")]).await;
+    let (err, v) = call(&s, "netbox_delete_object", json!({ "object_type": "dcim.site", "object_id": 1 })).await;
+    assert!(err && v.to_string().contains("confirmation_required"), "{v}");
+    assert!(sent(&log, "DELETE").is_empty());
+}

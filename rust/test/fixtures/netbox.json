@@ -1,0 +1,41 @@
+{
+  "_doc": "Simulated NetBox used by MCP_TEST_MODE / --test. Static documents only; list/object/write replies are derived in src/mock.rs. Nothing here is real data.",
+  "status": { "netbox-version": "4.2.0-test", "django-version": "5.0", "python-version": "3.12", "plugins": { "netbox_dns": "1.0.0" }, "rq-workers-running": 1 },
+  "object_types": {
+    "count": 1, "next": null, "previous": null,
+    "results": [ { "app_label": "netbox_dns", "model": "zone", "display": "DNS zone", "rest_api_endpoint": "/api/plugins/netbox-dns/zones/", "is_plugin_model": true } ]
+  },
+  "object": { "id": 1, "display": "test-object-1", "name": "test-object-1", "slug": "test-object-1", "status": { "value": "active", "label": "Active" }, "description": "simulated", "psk": "do-not-leak", "created": "2026-01-01T00:00:00Z" },
+  "changes": { "count": 1, "next": null, "previous": null, "results": [ { "id": 1, "time": "2026-01-01T00:00:00Z", "user_name": "test-user", "action": { "value": "update", "label": "Updated" }, "changed_object_type": "dcim.device", "changed_object_id": 123, "object_repr": "test-object-1", "prechange_data": { "status": "planned" }, "postchange_data": { "status": "active" } } ] },
+  "trace": [ [ { "id": 1, "name": "eth0" } ], { "id": 7, "label": "test-cable" }, [ { "id": 2, "name": "eth1" } ] ],
+  "elevation": { "count": 2, "next": null, "previous": null, "results": [ { "id": 1, "name": "U1", "face": "front", "device": null }, { "id": 2, "name": "U2", "face": "front", "device": { "id": 1, "name": "test-object-1" } } ] },
+  "render_config": { "configuration": "hostname test-object-1\n", "content": "hostname test-object-1\n" },
+  "script_result": { "id": 77, "status": { "value": "pending", "label": "Pending" }, "result": "simulated, nothing ran" },
+  "graphql": { "data": { "site": { "name": "test-site" } } },
+  "schema": {
+    "openapi": "3.0.3",
+    "paths": {
+      "/api/dcim/devices/": {
+        "get": { "parameters": [ { "name": "name", "in": "query" }, { "name": "site_id", "in": "query" }, { "name": "status", "in": "query" } ] },
+        "post": { "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeviceReq" } } } } }
+      },
+      "/api/dcim/devices/{id}/": { "get": {}, "patch": {}, "delete": {} },
+      "/api/dcim/devices/{id}/render-config/": { "post": { "summary": "Render config" } },
+      "/api/dcim/sites/": {
+        "get": { "parameters": [ { "name": "name", "in": "query" } ] },
+        "post": { "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SiteReq" } } } } }
+      },
+      "/api/dcim/sites/{id}/": { "get": {}, "patch": {}, "delete": {} },
+      "/api/plugins/netbox-dns/zones/": {
+        "get": { "parameters": [ { "name": "name", "in": "query" } ] },
+        "post": { "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SiteReq" } } } } }
+      },
+      "/api/plugins/netbox-dns/zones/{id}/": { "get": {}, "patch": {}, "delete": {} }
+    },
+    "components": { "schemas": {
+      "SiteReq": { "type": "object", "required": ["name", "slug"], "properties": { "name": { "type": "string" }, "slug": { "type": "string" }, "status": { "$ref": "#/components/schemas/StatusEnum" } } },
+      "DeviceReq": { "type": "object", "required": ["name", "role", "site"], "properties": { "name": { "type": "string" }, "role": { "type": "integer" }, "site": { "type": "integer" }, "status": { "$ref": "#/components/schemas/StatusEnum" } } },
+      "StatusEnum": { "type": "string", "enum": ["active", "planned", "offline"] }
+    } }
+  }
+}

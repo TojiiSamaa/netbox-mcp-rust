@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 const HELP: &str = "nbmcp: MCP server for NetBox (read, guarded write, plugins)
 
-Usage: nbmcp [--transport stdio|http] [--host 127.0.0.1] [--port 8000] [--list-tools] [--version]
+Usage: nbmcp [--transport stdio|http] [--host 127.0.0.1] [--port 8000] [--list-tools] [--test] [--version]
              [--netbox-url URL] [--netbox-token TOKEN] [--[no-]verify-ssl]
              [--enable-plugin-discovery true|false] [--log-level LEVEL]
              [--cors-origins a,b] [--mcp-auth-token TOKEN]
@@ -24,6 +24,9 @@ Options override the environment, which overrides a .env file in the current dir
   NETBOX_ALLOW_DELETE=true            also enable deletions and scripts
   NETBOX_DRY_RUN=true                 writes are previewed, never sent
   NETBOX_TOKEN_PASSTHROUGH=true       HTTP: each client's Bearer is its own NetBox token
+  MCP_TEST_MODE=1 or --test           simulated NetBox, no network, no credentials (all tools answer from fixtures)
+  MCP_TEST_APPROVER=approve|deny|timeout|absent   answer to confirmations in test mode (default deny)
+  NETBOX_STATS_FILE=path              JSON export of the netbox_stats counters
 See the README for the full list.
 ";
 
@@ -33,6 +36,7 @@ struct Cli {
     host: Option<String>,
     port: Option<String>,
     list_tools: bool,
+    test: bool,
     help: bool,
     version: bool,
     set: Vec<(&'static str, String)>,
@@ -56,6 +60,7 @@ fn parse_cli() -> Result<Cli, NbError> {
                 v => return Err(bad(format!("--transport: \"{v}\" is not stdio or http."))),
             },
             "--list-tools" => cli.list_tools = true,
+            "--test" => cli.test = true,
             "-h" | "--help" => cli.help = true,
             "-V" | "--version" => cli.version = true,
             "--host" => cli.host = Some(value("--host")?),
@@ -78,6 +83,12 @@ fn build_env(cli: &Cli) -> Env {
     let mut env = process_env();
     for (k, v) in &cli.set {
         env.insert((*k).to_string(), v.clone());
+    }
+    if cli.test {
+        env.insert("MCP_TEST_MODE".into(), "1".into());
+    }
+    if matches!(env.get("MCP_TEST_MODE").map(|v| v.trim().to_ascii_lowercase()).as_deref(), Some("1" | "true" | "yes" | "on")) {
+        return env; // mode test : ni .env ni identifiants NetBox ne sont lus
     }
     if let Ok(text) = std::fs::read_to_string(".env") {
         merge_dotenv(&mut env, &text);
