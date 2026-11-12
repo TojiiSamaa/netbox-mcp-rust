@@ -33,13 +33,18 @@ def test_agents_md_and_readme_counts_follow_the_tool_list():
     n = len(set(re.findall(r'\b(?:read|write)\(\s*"(netbox_\w+)"', src)))
     for name in ("AGENTS.md", "README.md"):
         text = (ROOT / name).read_text(encoding="utf-8")
-        assert f"all {n} tools" in text or f"documents all {n} tools" in text, f"{name}: tool count differs from tools.rs ({n})"
+        assert f"all {n} tools" in text, f"{name}: tool count differs from tools.rs ({n})"
 
 
 def test_skill_documents_the_confirmation_settings_of_the_server():
     # Every operator setting that changes how a destructive call is confirmed must be in the skill.
     cfg = (ROOT / "rust/src/config.rs").read_text(encoding="utf-8")
     skill = (ROOT / "skill/netbox-mcp-rust/SKILL.md").read_text(encoding="utf-8")
-    for var in ("NETBOX_ELICIT", "NETBOX_CONFIRM_ARG", "NETBOX_APPROVAL_DIR", "MCP_TEST_APPROVER"):
+    for var in (
+        "NETBOX_ELICIT",
+        "NETBOX_CONFIRM_ARG",
+        "NETBOX_APPROVAL_DIR",
+        "MCP_TEST_APPROVER",
+    ):
         assert var in cfg, f"{var} no longer read by config.rs: update this test"
         assert var in skill, f"{var} is not documented in SKILL.md"
