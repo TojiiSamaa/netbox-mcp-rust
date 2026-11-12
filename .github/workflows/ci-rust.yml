@@ -1,0 +1,50 @@
+name: CI Rust
+
+# Porte de tests du portage Rust (rust/) : format, clippy sans avertissement, tests.
+# Appelé aussi par release-rust.yml (needs: tests) : pas de release sans tests verts.
+# Le test.yml existant ne couvre que le serveur Python amont.
+
+on:
+  pull_request:
+    paths: ["rust/**", ".github/workflows/ci-rust.yml", ".github/workflows/release-rust.yml"]
+  push:
+    branches: [main]
+    paths: ["rust/**", ".github/workflows/ci-rust.yml", ".github/workflows/release-rust.yml"]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-latest }
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Toolchain stable (clippy, rustfmt)
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+          cargo --version
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+      - name: cargo clippy -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: cargo test
+        run: cargo test --locked
